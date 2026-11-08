@@ -95,7 +95,11 @@ const ITEM_FALL_SPEED = GROUND_Y / ITEM_FALL_TIME;   // y=-R 에서 바닥(GROUN
 const ITEM_SPAWN_MIN = 8;            // 다음 아이템까지 8 ~ 14초 (무작위)
 const ITEM_SPAWN_MAX = 14;
 const ITEM_GROUND_TIME = 5;          // 바닥에 떨어진 아이템은 5초 뒤 사라짐
-const EFFECT_TIME = 3;               // 아이템 효과 시간
+const EFFECT_TIME = 3;               // 스피드업 / 번개 효과 시간
+const GIANT_TIME = 5;                // 거대화 효과 시간
+const HIGH_JUMP_USES = 3;            // 고공점프: 높은 점프 3번
+const TIMED_FX = ['speed', 'giant', 'shrink'];   // 시간으로 끝나는 효과 (고공점프는 횟수)
+const ITEM_DURATION = { speed: EFFECT_TIME, giant: GIANT_TIME, shrink: EFFECT_TIME };
 const SPEED_MUL = 1.6;               // 스피드업: 이동 속도 1.6배
 const BALL_BOOST_TIME = 2;           // 스피드업 중에 친 공은 닿은 순간부터 2초 동안
 const BALL_BOOST_SCALE = 1.5;        //   궤적을 따라 1.5배 빠르게 날아감
@@ -106,20 +110,22 @@ const SCALE_RATE = 2.4;              // 크기가 변하는 속도 (1 → 1.6 �
 const ITEM_TYPES = ['speed', 'giant', 'jump', 'shrink'];
 const ITEM_INFO = {
   speed:  { name: '스피드업', color: '#1fae68', light: '#7fe0ad', desc: ['3초간 빨라짐', '친 공도 2초간 빨라짐'] },
-  giant:  { name: '거대화',   color: '#f2683c', light: '#ffb08f', desc: ['3초간', '몸이 커짐'] },
-  jump:   { name: '고공점프', color: '#8a5cf0', light: '#c4a9ff', desc: ['3초간', '점프 높이 2배'] },
+  giant:  { name: '거대화',   color: '#f2683c', light: '#ffb08f', desc: ['5초간', '몸이 커짐'] },
+  jump:   { name: '고공점프', color: '#8a5cf0', light: '#c4a9ff', desc: ['3번 동안', '점프 높이 2배'] },
   shrink: { name: '번개',     color: '#2b86e8', light: '#93c8ff', desc: ['3초간', '상대가 작아짐'] },
 };
 
 // 컴퓨터(AI)
 const AI_JUMP_RISE = 120;            // 점프해서 칠 때 기준 발 높이
 const AI_THINK = 0.1;                // 계획을 다시 세우는 간격
-const AI_REACT_MIN = 0.08;           // 공이 맞은 뒤 반응하기까지 지연
-const AI_REACT_MAX = 0.2;
-const AI_LATE_CHANCE = 0.08;         // 가끔 반응이 늦음
+// 난이도 (혼자 하기). react: 공이 맞은 뒤 반응까지 지연, late: 가끔 반응이 늦을 확률,
+// err: 위치 오차(px), blunder: 낙하 지점을 크게 잘못 판단할 확률, jump: 네트 근처 공에 점프 공격할 확률
+const AI_LEVELS = {
+  easy:   { label: '하', name: '쉬움',   reactMin: 0.18, reactMax: 0.32, late: 0.18, err: 26, blunder: 0.22, jump: 0.2 },
+  normal: { label: '중', name: '보통',   reactMin: 0.08, reactMax: 0.2,  late: 0.08, err: 16, blunder: 0.1,  jump: 0.5 },
+  hard:   { label: '상', name: '어려움', reactMin: 0.05, reactMax: 0.12, late: 0.03, err: 8,  blunder: 0.04, jump: 0.7 },
+};
 const AI_LATE_EXTRA = 0.35;
-const AI_ERR = 16;                   // 위치 오차(px)
-const AI_BLUNDER_CHANCE = 0.1;       // 가끔 큰 실수 (낙하 지점을 잘못 판단)
 const AI_BLUNDER_MIN = 45;
 const AI_BLUNDER_MAX = 80;
 const AI_DEAD = 1;                   // 목표 위치 허용 오차 (한 스텝 이동량의 절반 이상이라 좌우로 떨리지 않음)
@@ -127,7 +133,6 @@ const AI_OFF_MIN = 10;               // 닿는 순간 공보다 뒤에 서는 �
 const AI_OFF_MAX = 36;
 const AI_OFF_SAFE = 10;              // 오차가 있어도 최소 이만큼은 옆으로 비켜 섬 (정중앙 금지)
 const AI_SEARCH = 90;                // 낙하 지점 좌우로 이 범위 안에서 설 위치 후보를 찾음
-const AI_JUMP_CHANCE = 0.5;          // 네트 근처 공일 때 점프 공격을 시도할 확률
 const AI_JUMP_ZONE = 200;            // 네트에서 이 거리 안쪽으로 오는 공만 점프 시도
 const AI_JUMP_MIN_ATTACK = -20;      // 이보다 받기 쉬운 공밖에 못 만들면 점프하지 않음
 const AI_SLIDE_BACK = 12;            // 슬라이딩으로 받을 때도 공보다 살짝 뒤에 몸이 오도록
@@ -245,8 +250,9 @@ canvas.addEventListener('click', (e) => {
 // ---------------------------------------------------------------------
 //  5. 게임 상태
 // ---------------------------------------------------------------------
-let screen = 'title';    // 'title' | 'game' | 'over'
+let screen = 'title';    // 'title' | 'level'(난이도 고르기) | 'game' | 'over'
 let mode = 'demo';       // 'demo'(시작 화면 배경) | 'cpu' | '2p'
+let aiLevel = 'normal';  // 혼자 하기 난이도: 'easy' | 'normal' | 'hard'
 let phase = 'play';      // 'play' | 'point'(득점 후 잠깐 멈춤)
 let phaseTimer = 0;
 let score = [0, 0];
@@ -337,7 +343,8 @@ function useItem(c) {
     bolts.push({ side: o.side, life: 0.35, max: 0.35 });
     addPopup(o.x, o.y - CAT_H * o.scale - 22, '작아져라!', info.color);
   } else {
-    c.fx[type] = EFFECT_TIME;                      // 같은 효과를 또 쓰면 3초로 다시 채움
+    // 같은 효과를 또 쓰면 처음부터 다시 채움 (고공점프는 횟수)
+    c.fx[type] = type === 'jump' ? HIGH_JUMP_USES : ITEM_DURATION[type];
     addPopup(c.x, c.y - CAT_H * c.scale - 22, info.name + '!', info.color);
   }
   rings.push({ x: c.x, y: c.y - CAT_H * c.scale * 0.5, color: info.color, life: 0.4, max: 0.4 });
@@ -494,7 +501,7 @@ function updateCat(c, inp, dt) {
   c.px = c.x;
   c.py = c.y;
   // 아이템 효과 시간 감소 + 크기 변화
-  for (const k of ITEM_TYPES) if (c.fx[k] > 0) c.fx[k] = Math.max(0, c.fx[k] - dt);
+  for (const k of TIMED_FX) if (c.fx[k] > 0) c.fx[k] = Math.max(0, c.fx[k] - dt);
   c.scale = approach(c.scale, scaleTarget(c.fx.giant, c.fx.shrink), SCALE_RATE * dt);
   if (c.item) c.itemHeldT += dt;
 
@@ -539,7 +546,8 @@ function updateCat(c, inp, dt) {
         c.vx = c.slideDir * SLIDE_SPEED * speedMulOf(c);
         puff(c.x, GROUND_Y, 5, 14);
       } else if (inp.jump) {
-        c.vy = -jumpVOf(c);                     // 고공점프 중이면 점프 높이 2배
+        c.vy = -jumpVOf(c);                     // 고공점프가 남아 있으면 점프 높이 2배
+        if (c.fx.jump > 0) c.fx.jump--;         // 한 번 쓸 때마다 1회 차감
         c.onGround = false;
       }
     }
@@ -642,6 +650,8 @@ function onBallLanded() {
   phaseTimer = POINT_PAUSE;
   server = scorer;                      // 점수 낸 쪽이 다음 서브
   cats[scorer].happy = POINT_PAUSE;
+  // 득점하면 사용 중인 아이템 효과는 모두 끝 (들고 있는 아이템, 떨어지는 아이템은 그대로)
+  for (const c of cats) c.fx = makeFx();
   if (mode !== 'demo') {
     score[scorer]++;
     showMessage(CAT_NAMES[scorer] + ' 득점!', POINT_PAUSE - 0.1);
@@ -840,7 +850,6 @@ function simCatStep(k, dt) {
   k.g = Math.max(0, k.g - dt);
   k.sh = Math.max(0, k.sh - dt);
   k.sp = Math.max(0, k.sp - dt);
-  k.jp = Math.max(0, k.jp - dt);
   k.s = approach(k.s, scaleTarget(k.g, k.sh), SCALE_RATE * dt);
 }
 
@@ -1020,12 +1029,17 @@ function aiWantsItem(c, A, p, prof) {
   return p.hitT < AI_ITEM_SOON || holdLong;   // 스피드업·거대화: 3초 안에 공을 받을 때
 }
 
+// 이 고양이를 조종하는 AI 의 난이도 (데모는 보통)
+function aiLevelOf(c) {
+  return AI_LEVELS[mode === 'cpu' ? aiLevel : 'normal'];
+}
+
 // 이번 공에서 설 위치의 오차 (+ 는 "뒤" 방향). 서브 때는 작은 오차만.
-function aiError(serve) {
-  let e = (Math.random() + Math.random() - 1) * AI_ERR;   // -AI_ERR ~ +AI_ERR (가운데가 많음)
+function aiError(lv, serve) {
+  let e = (Math.random() + Math.random() - 1) * lv.err;   // -err ~ +err (가운데가 많음)
   // 가끔 큰 실수: 공이 더 멀리 갈 거라고 착각 → 너무 뒤에 서서 공이 앞에 떨어지거나 옆구리에 맞음
   // (앞쪽으로 크게 틀리면 정중앙에서 받게 되므로 실수는 항상 "뒤" 방향)
-  if (!serve && Math.random() < AI_BLUNDER_CHANCE) e += rand(AI_BLUNDER_MIN, AI_BLUNDER_MAX);
+  if (!serve && Math.random() < lv.blunder) e += rand(AI_BLUNDER_MIN, AI_BLUNDER_MAX);
   return e;
 }
 
@@ -1043,11 +1057,13 @@ function aiInput(c) {
   if (ball.shotId !== A.shotId) {
     A.shotId = ball.shotId;
     const serve = ball.lastHit < 0;             // 서브 공(아직 아무도 안 맞힘)
-    A.react = rand(AI_REACT_MIN, AI_REACT_MAX);
-    if (!serve && Math.random() < AI_LATE_CHANCE) A.react += AI_LATE_EXTRA;
-    A.err = aiError(serve);
+    const lv = aiLevelOf(c);
+    A.react = rand(lv.reactMin, lv.reactMax);
+    if (!serve && Math.random() < lv.late) A.react += AI_LATE_EXTRA;
+    A.err = aiError(lv, serve);
     A.recvX = null;
-    A.wantJump = !serve && Math.random() < AI_JUMP_CHANCE;   // 서브는 점프 없이 부드럽게
+    // 서브는 점프 없이 부드럽게. 고공점프가 남아 있으면 점프 공격에 씀
+    A.wantJump = !serve && (Math.random() < lv.jump || c.fx.jump > 0);
     A.jumpPlan = null;                          // 이전 공에 대한 점프 계획은 버림
     A.jumpPending = false;
     if (A.mode === 'jump') A.mode = 'receive';
@@ -1218,8 +1234,16 @@ function step(dt) {
 function currentButtons() {
   if (screen === 'title') {
     return [
-      { x: 270, y: 144, w: 320, h: 50, label: '혼자 하기 (vs 컴퓨터)', action: () => startGame('cpu') },
+      { x: 270, y: 144, w: 320, h: 50, label: '혼자 하기 (vs 컴퓨터)', action: openLevelMenu },
       { x: 270, y: 204, w: 320, h: 50, label: '둘이 하기', action: () => startGame('2p') },
+    ];
+  }
+  if (screen === 'level') {
+    return [
+      { x: 150, y: 146, w: 176, h: 62, label: '하 · 쉬움', action: () => startCpu('easy') },
+      { x: 342, y: 146, w: 176, h: 62, label: '중 · 보통', action: () => startCpu('normal') },
+      { x: 534, y: 146, w: 176, h: 62, label: '상 · 어려움', action: () => startCpu('hard') },
+      { x: 360, y: 222, w: 140, h: 38, label: '뒤로', action: backToTitle, small: true },
     ];
   }
   if (screen === 'over') {
@@ -1246,24 +1270,42 @@ function activateButton(i) {
   if (btns[i]) btns[i].action();
 }
 
+function openLevelMenu() {
+  screen = 'level';
+  menuSel = ['easy', 'normal', 'hard'].indexOf(aiLevel);   // 지난번 고른 난이도에 커서
+}
+
+function backToTitle() {
+  screen = 'title';
+  menuSel = 0;
+}
+
+function startCpu(level) {
+  aiLevel = level;
+  startGame('cpu');
+}
+
 function onMenuKey(code) {
   if (screen === 'game') {
     if (code === 'Escape') goTitle();
     return;
   }
   if (screen === 'over' && overTimer < 0.5) return;   // 경기 끝난 직후 실수로 눌리는 것 방지
+  if (screen === 'level' && code === 'Escape') { backToTitle(); return; }
   const btns = currentButtons();
   if (!btns.length) return;
-  if (code === 'ArrowUp' || code === 'KeyW') {
+  if (code === 'ArrowUp' || code === 'KeyW' || code === 'ArrowLeft' || code === 'KeyA') {
     menuSel = (menuSel + btns.length - 1) % btns.length;
-  } else if (code === 'ArrowDown' || code === 'KeyS') {
+  } else if (code === 'ArrowDown' || code === 'KeyS' || code === 'ArrowRight' || code === 'KeyD') {
     menuSel = (menuSel + 1) % btns.length;
   } else if (code === 'Enter' || code === 'NumpadEnter' || code === 'Space') {
     activateButton(clamp(menuSel, 0, btns.length - 1));
   } else if (screen === 'title' && (code === 'Digit1' || code === 'Numpad1')) {
-    startGame('cpu');
+    openLevelMenu();
   } else if (screen === 'title' && (code === 'Digit2' || code === 'Numpad2')) {
     startGame('2p');
+  } else if (screen === 'level' && /^(Digit|Numpad)[123]$/.test(code)) {
+    startCpu(['easy', 'normal', 'hard'][Number(code.slice(-1)) - 1]);
   }
 }
 
@@ -2066,18 +2108,32 @@ function drawActiveEffects(c, x, y, dir) {
     ctx.arc(cx, y, 13, 0, TAU);
     ctx.fillStyle = 'rgba(255,255,255,0.75)';
     ctx.fill();
+    // 남은 양: 시간 효과는 남은 시간, 고공점프는 남은 횟수
+    const frac = t === 'jump' ? c.fx.jump / HIGH_JUMP_USES : c.fx[t] / ITEM_DURATION[t];
     ctx.beginPath();
-    ctx.arc(cx, y, 13, -Math.PI / 2, -Math.PI / 2 + TAU * (c.fx[t] / EFFECT_TIME));
+    ctx.arc(cx, y, 13, -Math.PI / 2, -Math.PI / 2 + TAU * frac);
     ctx.strokeStyle = ITEM_INFO[t].color;
     ctx.lineWidth = 3.5;
     ctx.stroke();
     drawItemIcon(t, cx, y, 9);
+    if (t === 'jump') {
+      ctx.beginPath();
+      ctx.arc(cx + 10, y + 10, 7, 0, TAU);
+      ctx.fillStyle = ITEM_INFO.jump.color;
+      ctx.fill();
+      ctx.font = `bold 10px ${FONT}`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillStyle = '#ffffff';
+      ctx.fillText(String(c.fx.jump), cx + 10, y + 10.5);
+      ctx.textBaseline = 'alphabetic';
+    }
     i++;
   }
 }
 
 function drawScore() {
-  const rightName = mode === 'cpu' ? '몽자 (컴퓨터)' : '몽자';
+  const rightName = mode === 'cpu' ? `몽자 (컴퓨터 · ${AI_LEVELS[aiLevel].name})` : '몽자';
   outlinedText(CAT_NAMES[0], 26, 34, 22, CAT_LOOK[0].body, '#4a2508', 'left', 5);
   outlinedText(String(score[0]), 26, 86, 50, '#ffffff', '#26314d', 'left', 8);
   outlinedText(rightName, W - 26, 34, 22, '#e3e8ef', '#26314d', 'right', 5);
@@ -2195,7 +2251,7 @@ function drawTitle() {
   ctx.fillRect(0, 0, W, H);
   const wob = Math.sin(gameTime * 2) * 3;
   outlinedText('고양이 배구', NET_X, 88 + wob, 60, '#ffffff', '#26314d', 'center', 11);
-  outlinedText('자몽  vs  몽자', NET_X, 126, 22, '#ffe08a', '#26314d', 'center', 6);
+  outlinedText(screen === 'level' ? '컴퓨터 난이도를 고르세요' : '자몽  vs  몽자', NET_X, 126, 22, '#ffe08a', '#26314d', 'center', 6);
   drawButtons();
 
   // 조작법 + 아이템 설명
@@ -2227,7 +2283,7 @@ function drawTitle() {
   ctx.font = `bold 14px ${FONT}`;
   ctx.fillStyle = '#26314d';
   ctx.textAlign = 'center';
-  ctx.fillText('아이템: 8~14초마다 하늘에서 하나씩! 닿으면 먹고, 아이템 키로 사용', NET_X, 360);
+  ctx.fillText('아이템: 8~14초마다 하늘에서 하나씩! 닿으면 먹고 아이템 키로 사용 (득점하면 효과 끝)', NET_X, 360);
   ITEM_TYPES.forEach((t, i) => {
     const bx = 112 + i * 162;
     drawItemIcon(t, bx + 18, 398, 16);
@@ -2258,7 +2314,8 @@ function drawOver() {
   ctx.restore();
   outlinedText(`${score[0]} : ${score[1]}`, NET_X, 204, 34, '#ffffff', '#26314d', 'center', 7);
   if (mode === 'cpu') {
-    outlinedText(winner === 0 ? '컴퓨터를 이겼어요!' : '아쉬워요, 다시 도전해 봐요!', NET_X, 240, 20, '#fff7d6', '#26314d', 'center', 5);
+    const lvName = AI_LEVELS[aiLevel].name;
+    outlinedText(winner === 0 ? `컴퓨터(${lvName})를 이겼어요!` : '아쉬워요, 다시 도전해 봐요!', NET_X, 240, 20, '#fff7d6', '#26314d', 'center', 5);
   }
   if (overTimer >= 0.5) drawButtons();
 }
@@ -2298,8 +2355,9 @@ function drawHitboxes() {
 
 function render(alpha) {
   ctx.setTransform(scaleX, 0, 0, scaleY, 0, 0);
+  const menu = screen === 'title' || screen === 'level';
   drawBackground();
-  if (screen !== 'title') drawScore();
+  if (!menu) drawScore();
   drawNet();
   drawCatShadow(cats[0], alpha);
   drawCatShadow(cats[1], alpha);
@@ -2311,7 +2369,7 @@ function render(alpha) {
   drawEffects();
   if (DEBUG) drawHitboxes();
   drawMessage();
-  if (screen === 'title') drawTitle();
+  if (menu) drawTitle();
   else if (screen === 'over') drawOver();
 }
 
