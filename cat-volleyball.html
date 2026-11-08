@@ -28,7 +28,7 @@
 <script>
 'use strict';
 // =====================================================================
-//  고양이 배구 — 치즈 vs 구름
+//  고양이 배구 — 자몽 vs 몽자 (아이템 모드)
 //  HTML + JavaScript + Canvas 만 사용 (외부 라이브러리 없음)
 //  모든 좌표는 논리 해상도 860 x 480 기준이고, 화면은 브라우저 크기에 맞게 확대된다.
 // =====================================================================
@@ -88,12 +88,31 @@ const SERVE_HOLD = 0.6;              // 서브 공이 떨어지기 전 멈춰 �
 const FIRST_SERVE_HOLD = 1.1;
 const POINT_PAUSE = 1.4;             // 득점 후 다음 서브까지 쉬는 시간
 
+// 아이템
+const ITEM_R = 17;                   // 아이템 반지름
+const ITEM_FALL_TIME = 3;            // 화면 위 끝 → 바닥까지 3초
+const ITEM_FALL_SPEED = GROUND_Y / ITEM_FALL_TIME;   // y=-R 에서 바닥(GROUND_Y-R)까지 = GROUND_Y px
+const ITEM_SPAWN_MIN = 8;            // 다음 아이템까지 8 ~ 14초 (무작위)
+const ITEM_SPAWN_MAX = 14;
+const ITEM_GROUND_TIME = 5;          // 바닥에 떨어진 아이템은 5초 뒤 사라짐
+const EFFECT_TIME = 3;               // 아이템 효과 시간
+const SPEED_MUL = 1.6;               // 스피드업: 이동 속도 1.6배
+const BALL_BOOST_TIME = 2;           // 스피드업 중에 친 공은 닿은 순간부터 2초 동안
+const BALL_BOOST_SCALE = 1.5;        //   궤적을 따라 1.5배 빠르게 날아감
+const GIANT_SCALE = 1.6;             // 거대화: 1.6배
+const SHRINK_SCALE = 0.6;            // 번개: 상대가 0.6배
+const HIGH_JUMP_V = JUMP_V * Math.SQRT2;   // 고공점프: 점프 높이 2배 (초속 √2배)
+const SCALE_RATE = 2.4;              // 크기가 변하는 속도 (1 → 1.6 에 0.25초)
+const ITEM_TYPES = ['speed', 'giant', 'jump', 'shrink'];
+const ITEM_INFO = {
+  speed:  { name: '스피드업', color: '#1fae68', light: '#7fe0ad', desc: ['3초간 빨라짐', '친 공도 2초간 빨라짐'] },
+  giant:  { name: '거대화',   color: '#f2683c', light: '#ffb08f', desc: ['3초간', '몸이 커짐'] },
+  jump:   { name: '고공점프', color: '#8a5cf0', light: '#c4a9ff', desc: ['3초간', '점프 높이 2배'] },
+  shrink: { name: '번개',     color: '#2b86e8', light: '#93c8ff', desc: ['3초간', '상대가 작아짐'] },
+};
+
 // 컴퓨터(AI)
-const AI_HIT_Y = GROUND_Y - CAT_H - BALL_R + 4;             // 서 있는 고양이 머리에 공이 닿는 높이(공 중심 y)
-const AI_LOW_Y = GROUND_Y - FLAT_H - BALL_R;                // 슬라이딩한 고양이에 공이 닿는 높이
-const AI_JUMP_RISE = 120;                                    // 점프해서 칠 때 발 높이
-const AI_JUMP_Y = GROUND_Y - AI_JUMP_RISE - CAT_H - BALL_R + 4;
-const AI_JUMP_LEAD = (JUMP_V - Math.sqrt(JUMP_V * JUMP_V - 2 * CAT_G * AI_JUMP_RISE)) / CAT_G; // 점프 후 그 높이까지 걸리는 시간
+const AI_JUMP_RISE = 120;            // 점프해서 칠 때 기준 발 높이
 const AI_THINK = 0.1;                // 계획을 다시 세우는 간격
 const AI_REACT_MIN = 0.08;           // 공이 맞은 뒤 반응하기까지 지연
 const AI_REACT_MAX = 0.2;
@@ -103,8 +122,8 @@ const AI_ERR = 16;                   // 위치 오차(px)
 const AI_BLUNDER_CHANCE = 0.1;       // 가끔 큰 실수 (낙하 지점을 잘못 판단)
 const AI_BLUNDER_MIN = 45;
 const AI_BLUNDER_MAX = 80;
-const AI_DEAD = 1;                   // 목표 위치 허용 오차 (한 스텝 이동량 1.46px 의 절반 이상이라 좌우로 떨리지 않음)
-const AI_OFF_MIN = 10;               // 낙하 지점보다 뒤에 서는 거리 후보 (최소~최대)
+const AI_DEAD = 1;                   // 목표 위치 허용 오차 (한 스텝 이동량의 절반 이상이라 좌우로 떨리지 않음)
+const AI_OFF_MIN = 10;               // 닿는 순간 공보다 뒤에 서는 거리 (좋은 범위, 크기에 비례)
 const AI_OFF_MAX = 36;
 const AI_OFF_SAFE = 10;              // 오차가 있어도 최소 이만큼은 옆으로 비켜 섬 (정중앙 금지)
 const AI_SEARCH = 90;                // 낙하 지점 좌우로 이 범위 안에서 설 위치 후보를 찾음
@@ -112,9 +131,11 @@ const AI_JUMP_CHANCE = 0.5;          // 네트 근처 공일 때 점프 공격�
 const AI_JUMP_ZONE = 200;            // 네트에서 이 거리 안쪽으로 오는 공만 점프 시도
 const AI_JUMP_MIN_ATTACK = -20;      // 이보다 받기 쉬운 공밖에 못 만들면 점프하지 않음
 const AI_SLIDE_BACK = 12;            // 슬라이딩으로 받을 때도 공보다 살짝 뒤에 몸이 오도록
+const AI_ITEM_SOON = 1.6;            // 공이 이 시간 안에 내 쪽으로 올 때 스피드업/거대화 사용
+const AI_ITEM_HOLD_MAX = 12;         // 아이템을 이보다 오래 들고 있으면 기회가 될 때 그냥 사용
 
 const FONT = '"Apple SD Gothic Neo", "Malgun Gothic", "Noto Sans KR", "Nanum Gothic", sans-serif';
-const CAT_NAMES = ['치즈', '구름'];
+const CAT_NAMES = ['자몽', '몽자'];
 
 // ---------------------------------------------------------------------
 //  2. 캔버스 / 화면 크기
@@ -147,7 +168,12 @@ const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 const lerp = (a, b, t) => a + (b - a) * t;
 const rand = (a, b) => a + Math.random() * (b - a);
 
-// 슬라이딩 시작 후 t초 동안 미끄러지는 거리
+function approach(cur, target, maxStep) {
+  const d = target - cur;
+  return Math.abs(d) <= maxStep ? target : cur + Math.sign(d) * maxStep;
+}
+
+// 슬라이딩 시작 후 t초 동안 미끄러지는 거리 (기본 속도 기준)
 function slideDistance(t) {
   t = clamp(t, 0, SLIDE_TIME);
   return SLIDE_SPEED * (t - (SLIDE_DECEL * t * t) / (2 * SLIDE_TIME));
@@ -160,12 +186,13 @@ const SLIDE_REACH = slideDistance(SLIDE_TIME) + 25;
 const keys = new Set();          // 지금 눌려 있는 키
 const pressedKeys = new Set();   // 이번 스텝에 새로 눌린 키
 const BLOCK_KEYS = new Set(['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space']);
-const P1_KEYS = { left: ['KeyA'], right: ['KeyD'], jump: ['KeyW'], slide: ['KeyS'] };
-const P2_KEYS = { left: ['ArrowLeft'], right: ['ArrowRight'], jump: ['ArrowUp'], slide: ['ArrowDown'] };
-// 혼자 하기에서는 치즈를 방향키로도 조작할 수 있게 함
+const P1_KEYS = { left: ['KeyA'], right: ['KeyD'], jump: ['KeyW'], slide: ['KeyS'], use: ['KeyE'] };
+const P2_KEYS = { left: ['ArrowLeft'], right: ['ArrowRight'], jump: ['ArrowUp'], slide: ['ArrowDown'], use: ['Enter', 'NumpadEnter'] };
+// 혼자 하기에서는 자몽을 방향키 / Enter / Space 로도 조작할 수 있게 함
 const P1_SOLO_KEYS = {
   left: ['KeyA', 'ArrowLeft'], right: ['KeyD', 'ArrowRight'],
   jump: ['KeyW', 'ArrowUp'], slide: ['KeyS', 'ArrowDown'],
+  use: ['KeyE', 'Enter', 'NumpadEnter', 'Space'],
 };
 
 function keyCodeOf(e) {
@@ -223,7 +250,7 @@ let mode = 'demo';       // 'demo'(시작 화면 배경) | 'cpu' | '2p'
 let phase = 'play';      // 'play' | 'point'(득점 후 잠깐 멈춤)
 let phaseTimer = 0;
 let score = [0, 0];
-let server = 0;          // 다음 서브할 고양이 (0: 치즈, 1: 구름)
+let server = 0;          // 다음 서브할 고양이 (0: 자몽, 1: 몽자)
 let winner = -1;
 let overTimer = 0;
 let gameTime = 0;
@@ -233,9 +260,16 @@ let messageDur = 1;
 let menuSel = 0;
 let DEBUG = location.hash === '#debug';   // 주소 뒤에 #debug 를 붙이면 판정 범위 표시
 
+let fieldItem = null;    // 하늘에서 떨어지는 / 바닥에 놓인 아이템 (한 번에 하나)
+let itemTimer = 0;       // 다음 아이템이 나올 때까지 남은 시간
+
 function homeX(side) {
   const mid = (COURT_MIN_X + COURT_MAX_X) / 2;
   return side === 0 ? mid : W - mid;
+}
+
+function makeFx() {
+  return { speed: 0, giant: 0, jump: 0, shrink: 0 };   // 각 효과의 남은 시간
 }
 
 function makeCat(side) {
@@ -257,16 +291,63 @@ function makeCat(side) {
     landT: 0,
     blinkT: rand(1, 4),
     dustT: 0,
+    item: null,                     // 가지고 있는 아이템 (하나만)
+    itemHeldT: 0,
+    fx: makeFx(),
+    scale: 1,                       // 현재 크기 (거대화/번개로 부드럽게 변함)
   };
 }
 const cats = [makeCat(0), makeCat(1)];
 
-const ball = { x: 0, y: 0, px: 0, py: 0, vx: 0, vy: 0, angle: 0, held: false, holdT: 0, shotId: 0, lastHit: -1 };
+const ball = {
+  x: 0, y: 0, px: 0, py: 0, vx: 0, vy: 0, angle: 0,
+  held: false, holdT: 0, shotId: 0, lastHit: -1,
+  boost: 0,                         // 스피드업 공: 남은 빠른 시간(초)
+  trail: [],
+};
 
 // ---------------------------------------------------------------------
-//  6. 고양이 판정 모양: 뒤집힌 U자
+//  6. 아이템 효과 → 고양이 능력치
+// ---------------------------------------------------------------------
+function scaleTarget(giantLeft, shrinkLeft) {
+  return (giantLeft > 0 ? GIANT_SCALE : 1) * (shrinkLeft > 0 ? SHRINK_SCALE : 1);
+}
+function speedMulOf(c) { return c.fx.speed > 0 ? SPEED_MUL : 1; }
+function walkSpeedOf(c) { return WALK_SPEED * speedMulOf(c); }
+function jumpVOf(c) { return c.fx.jump > 0 ? HIGH_JUMP_V : JUMP_V; }
+
+// dist 만큼 걸어가는 데 걸리는 시간 (남은 스피드업 시간까지 고려)
+function travelTime(c, dist) {
+  dist = Math.max(0, dist);
+  const fast = WALK_SPEED * SPEED_MUL;
+  const tf = c.fx.speed;
+  if (dist <= fast * tf) return dist / fast;
+  return tf + (dist - fast * tf) / WALK_SPEED;
+}
+
+function useItem(c) {
+  if (!c.item || phase !== 'play' || screen === 'over') return false;
+  const type = c.item;
+  const info = ITEM_INFO[type];
+  c.item = null;
+  c.itemHeldT = 0;
+  if (type === 'shrink') {
+    const o = cats[1 - c.side];
+    o.fx.shrink = EFFECT_TIME;                     // 상대가 3초간 작아짐
+    bolts.push({ side: o.side, life: 0.35, max: 0.35 });
+    addPopup(o.x, o.y - CAT_H * o.scale - 22, '작아져라!', info.color);
+  } else {
+    c.fx[type] = EFFECT_TIME;                      // 같은 효과를 또 쓰면 3초로 다시 채움
+    addPopup(c.x, c.y - CAT_H * c.scale - 22, info.name + '!', info.color);
+  }
+  rings.push({ x: c.x, y: c.y - CAT_H * c.scale * 0.5, color: info.color, life: 0.4, max: 0.4 });
+  return true;
+}
+
+// ---------------------------------------------------------------------
+//  7. 고양이 판정 모양: 뒤집힌 U자
 //     위쪽은 둥근 머리(반원), 양옆은 바닥(발)까지 내려오는 세로 벽.
-//     슬라이딩 중에는 납작한 모양(윗면 평평 + 둥근 모서리)으로 바뀐다.
+//     슬라이딩 중에는 납작한 모양(윗면 평평 + 둥근 모서리)으로 바뀐다. 크기(scale)에 비례.
 // ---------------------------------------------------------------------
 function catFlatness(c) {
   if (c.state === 'slide') return Math.min(1, c.slideT / 0.06);
@@ -279,17 +360,22 @@ function catFlatness(c) {
 
 function catDims(c) {
   const f = catFlatness(c);
-  const hw = lerp(CAT_HW, FLAT_HW, f);
-  const h = lerp(CAT_H, FLAT_H, f);
-  const rc = Math.min(hw, h, lerp(CAT_HW, FLAT_RC, f));   // 서 있을 때 rc = hw → 완전한 반원
+  const s = c.scale;
+  const hw = lerp(CAT_HW, FLAT_HW, f) * s;
+  const h = lerp(CAT_H, FLAT_H, f) * s;
+  const rc = Math.min(hw, h, lerp(CAT_HW, FLAT_RC, f) * s);   // 서 있을 때 rc = hw → 완전한 반원
   return { hw, h, rc };
+}
+
+function standDims(s) {
+  return { hw: CAT_HW * s, h: CAT_H * s, rc: CAT_HW * s };
 }
 
 function catBounds(c, hw) {
   return c.side === 0 ? [hw, NET_X - NET_HW - hw] : [NET_X + NET_HW + hw, W - hw];
 }
 
-// 공(중심 bx,by / 반지름 r)이 판정 모양에 닿았는지 검사.
+// 원(중심 bx,by / 반지름 r)이 판정 모양에 닿았는지 검사.
 // 닿았으면 바깥쪽 법선(nx,ny)과 파고든 깊이(pen)를 돌려준다.
 function catContact(cx, feetY, d, bx, by, r) {
   const coreY = feetY - d.h + d.rc;   // 둥근 머리(모서리 원) 중심 높이
@@ -340,7 +426,7 @@ function hitVelocity(nx, ny, catVx, catVy, netDir) {
 }
 
 // ---------------------------------------------------------------------
-//  7. 공 물리 (실제 게임과 AI 예측이 같은 함수를 사용)
+//  8. 공 물리 (실제 게임과 AI 예측이 같은 함수를 사용)
 // ---------------------------------------------------------------------
 function collideNet(b) {
   const dx = b.x - NET_X;
@@ -390,13 +476,28 @@ function moveBall(b, dt) {
   return b.y + BALL_R >= GROUND_Y;
 }
 
+// 실제 시간 dt 만큼 공을 진행. 스피드업 공(boost)이면 같은 궤적을 1.5배 빠르게 지나감
+function advanceBall(b, dt) {
+  let k = 1;
+  if (b.boost > 0) {
+    k = BALL_BOOST_SCALE;
+    b.boost = Math.max(0, b.boost - dt);   // 2초는 실제 시간으로 셈
+  }
+  return moveBall(b, dt * k);
+}
+
 // ---------------------------------------------------------------------
-//  8. 고양이 이동
-//     inp = { dir: -1|0|1, jump: bool(누르고 있음), slide: bool(이번에 눌림) }
+//  9. 고양이 이동
+//     inp = { dir: -1|0|1, jump: bool(누르고 있음), slide: bool(이번에 눌림), use: bool(이번에 눌림) }
 // ---------------------------------------------------------------------
 function updateCat(c, inp, dt) {
   c.px = c.x;
   c.py = c.y;
+  // 아이템 효과 시간 감소 + 크기 변화
+  for (const k of ITEM_TYPES) if (c.fx[k] > 0) c.fx[k] = Math.max(0, c.fx[k] - dt);
+  c.scale = approach(c.scale, scaleTarget(c.fx.giant, c.fx.shrink), SCALE_RATE * dt);
+  if (c.item) c.itemHeldT += dt;
+
   c.hitCooldown = Math.max(0, c.hitCooldown - dt);
   c.ouch = Math.max(0, c.ouch - dt);
   c.happy = Math.max(0, c.happy - dt);
@@ -409,11 +510,11 @@ function updateCat(c, inp, dt) {
   if (c.state === 'slide') {
     c.slideT += dt;
     const k = Math.min(1, c.slideT / SLIDE_TIME);
-    c.vx = c.slideDir * SLIDE_SPEED * (1 - SLIDE_DECEL * k);
+    c.vx = c.slideDir * SLIDE_SPEED * speedMulOf(c) * (1 - SLIDE_DECEL * k);
     c.dustT -= dt;
     if (c.dustT <= 0) {
       c.dustT = 0.035;
-      puff(c.x - c.slideDir * 30, GROUND_Y, 1, 6);
+      puff(c.x - c.slideDir * 30 * c.scale, GROUND_Y, 1, 6);
     }
     if (c.slideT >= SLIDE_TIME - 1e-9) {
       c.state = 'recover';
@@ -425,7 +526,7 @@ function updateCat(c, inp, dt) {
     c.vx = 0;                                   // 일어나는 동안 못 움직임
     if (c.recoverT >= RECOVER_TIME - 1e-9) c.state = 'normal';
   } else {
-    c.vx = inp.dir * WALK_SPEED;
+    c.vx = inp.dir * walkSpeedOf(c);
     c.facing = inp.dir !== 0 ? inp.dir : c.netDir;
     if (c.onGround) {
       if (c.slideBuffer > 0) {
@@ -435,10 +536,10 @@ function updateCat(c, inp, dt) {
         c.dustT = 0;
         c.slideDir = inp.dir !== 0 ? inp.dir : c.facing;   // 이동 방향으로 미끄러짐
         c.facing = c.slideDir;
-        c.vx = c.slideDir * SLIDE_SPEED;
+        c.vx = c.slideDir * SLIDE_SPEED * speedMulOf(c);
         puff(c.x, GROUND_Y, 5, 14);
       } else if (inp.jump) {
-        c.vy = -JUMP_V;
+        c.vy = -jumpVOf(c);                     // 고공점프 중이면 점프 높이 2배
         c.onGround = false;
       }
     }
@@ -457,30 +558,32 @@ function updateCat(c, inp, dt) {
     }
   }
 
-  // 가로 이동: 자기 코트 밖(네트 너머)으로 못 나감
+  // 가로 이동: 자기 코트 밖(네트 너머)으로 못 나감 (커지면 그만큼 범위가 좁아짐)
   c.x += c.vx * dt;
   const [mn, mx] = catBounds(c, catDims(c).hw);
   if (c.x < mn) c.x = mn;
   if (c.x > mx) c.x = mx;
 
-  if (c.onGround && c.state === 'normal' && c.vx !== 0) c.walkPhase += dt * 15;
+  if (c.onGround && c.state === 'normal' && c.vx !== 0) c.walkPhase += dt * 15 * speedMulOf(c);
   else c.walkPhase = 0;
 }
 
 // ---------------------------------------------------------------------
-//  9. 공 업데이트 (경기 중)
+//  10. 공 업데이트 (경기 중)
 // ---------------------------------------------------------------------
 function updateBall(dt) {
   const b = ball;
   b.px = b.x;
   b.py = b.y;
+  let k = 1;
   if (b.held) {
     b.holdT -= dt;
     if (b.holdT <= 0) b.held = false;
   } else {
-    moveBall(b, dt);
+    k = b.boost > 0 ? BALL_BOOST_SCALE : 1;
+    advanceBall(b, dt);
   }
-  b.angle += (b.vx / BALL_R) * dt;   // 날아가는 방향으로 회전
+  b.angle += (b.vx / BALL_R) * dt * k;   // 날아가는 방향으로 회전
 
   for (const c of cats) {
     if (c.hitCooldown > 0) continue;   // 맞은 직후 0.15초는 무시 (연속 충돌 방지)
@@ -494,9 +597,19 @@ function updateBall(dt) {
     b.held = false;
     b.shotId++;
     b.lastHit = c.side;
+    // 스피드업 중에 친 공은 지금부터 2초간 빨라짐 (스피드업이 아닌 고양이가 치면 보통 공으로)
+    b.boost = c.fx.speed > 0 ? BALL_BOOST_TIME : 0;
     c.hitCooldown = HIT_COOLDOWN;
     c.ouch = OUCH_TIME;                // 0.5초 동안 찡그린 표정
-    addSpark(b.x - hit.nx * BALL_R, b.y - hit.ny * BALL_R);
+    addSpark(b.x - hit.nx * BALL_R, b.y - hit.ny * BALL_R, b.boost > 0);
+  }
+
+  // 스피드업 공 잔상
+  if (b.boost > 0) {
+    b.trail.push({ x: b.x, y: b.y });
+    if (b.trail.length > 12) b.trail.shift();
+  } else if (b.trail.length) {
+    b.trail.shift();
   }
 
   if (!b.held && b.y + BALL_R >= GROUND_Y) onBallLanded();
@@ -507,6 +620,8 @@ function updateBallLoose(dt) {
   const b = ball;
   b.px = b.x;
   b.py = b.y;
+  b.boost = 0;
+  if (b.trail.length) b.trail.shift();
   if (moveBall(b, dt)) {
     b.y = GROUND_Y - BALL_R;
     if (b.vy > 0) b.vy = b.vy > 120 ? -b.vy * 0.45 : 0;
@@ -520,6 +635,7 @@ function onBallLanded() {
   b.y = GROUND_Y - BALL_R;
   b.vy = -Math.abs(b.vy) * 0.45;
   b.vx *= 0.6;
+  b.boost = 0;
   const scorer = b.x < NET_X ? 1 : 0;   // 바닥에 닿은 쪽의 반대편이 1점
   puff(b.x, GROUND_Y, 14, 16);
   phase = 'point';
@@ -545,7 +661,8 @@ function updatePoint(dt) {
   }
 }
 
-// 새 랠리: 고양이는 제자리로, 공은 서브하는 고양이 머리 위에서 떨어짐
+// 새 랠리: 고양이는 제자리로, 공은 서브하는 고양이 머리 위에서 떨어짐.
+// (아이템, 들고 있는 아이템, 남은 효과는 랠리가 바뀌어도 그대로 유지)
 function resetRally(hold) {
   for (const c of cats) {
     c.x = c.px = homeX(c.side);
@@ -559,6 +676,8 @@ function resetRally(hold) {
     c.happy = 0;
     c.slideBuffer = 0;
     c.facing = c.netDir;
+    const [mn, mx] = catBounds(c, catDims(c).hw);
+    c.x = c.px = clamp(c.x, mn, mx);
   }
   const s = cats[server];
   ball.x = ball.px = s.x + s.netDir * SERVE_OFFSET;
@@ -566,11 +685,24 @@ function resetRally(hold) {
   ball.vx = ball.vy = 0;
   ball.held = true;
   ball.holdT = hold;
+  ball.boost = 0;
+  ball.trail.length = 0;
   ball.shotId++;
   ball.lastHit = -1;
   phase = 'play';
   resetAI();
   pressedKeys.clear();
+}
+
+function resetItems() {
+  fieldItem = null;
+  itemTimer = rand(ITEM_SPAWN_MIN, ITEM_SPAWN_MAX);
+  for (const c of cats) {
+    c.item = null;
+    c.itemHeldT = 0;
+    c.fx = makeFx();
+    c.scale = 1;
+  }
 }
 
 function startGame(m) {
@@ -579,8 +711,8 @@ function startGame(m) {
   score = [0, 0];
   server = 0;
   winner = -1;
-  particles.length = 0;
-  sparks.length = 0;
+  clearEffects();
+  resetItems();
   resetRally(FIRST_SERVE_HOLD);
   showMessage('준비!', FIRST_SERVE_HOLD);
   canvas.style.cursor = 'default';
@@ -594,6 +726,8 @@ function goTitle() {
   server = Math.random() < 0.5 ? 0 : 1;
   winner = -1;
   messageTimer = 0;
+  clearEffects();
+  resetItems();
   resetRally(SERVE_HOLD);
 }
 
@@ -604,12 +738,71 @@ function showMessage(text, dur) {
 }
 
 // ---------------------------------------------------------------------
-//  10. 컴퓨터 플레이어 (AI)
-//      혼자 하기에서는 구름(오른쪽)을 담당. 시작 화면 데모에서는 양쪽 모두.
+//  11. 아이템: 8~14초마다 하나씩 하늘에서 떨어짐. 공중이든 바닥이든 닿으면 먹음.
+// ---------------------------------------------------------------------
+function spawnItem() {
+  const side = Math.random() < 0.5 ? 0 : 1;       // 왼쪽/오른쪽 코트 중 무작위
+  const margin = ITEM_R + 18;
+  const lo = side === 0 ? margin : NET_X + NET_HW + margin;
+  const hi = side === 0 ? NET_X - NET_HW - margin : W - margin;
+  fieldItem = {
+    type: ITEM_TYPES[Math.floor(Math.random() * ITEM_TYPES.length)],
+    x: rand(lo, hi),
+    y: -ITEM_R,
+    state: 'fall',          // 'fall' | 'ground'
+    t: 0,                   // 바닥에서 남은 시간
+    age: 0,
+  };
+}
+
+function updateItems(dt) {
+  if (screen !== 'over') {
+    itemTimer -= dt;
+    if (itemTimer <= 0 && !fieldItem) {          // 이미 하나 있으면 사라질 때까지 기다림
+      spawnItem();
+      itemTimer = rand(ITEM_SPAWN_MIN, ITEM_SPAWN_MAX);
+    }
+  }
+  const it = fieldItem;
+  if (!it) return;
+  it.age += dt;
+  if (it.state === 'fall') {
+    it.y += ITEM_FALL_SPEED * dt;
+    if (it.y >= GROUND_Y - ITEM_R) {
+      it.y = GROUND_Y - ITEM_R;
+      it.state = 'ground';
+      it.t = ITEM_GROUND_TIME;
+      puff(it.x, GROUND_Y, 6, 10);
+    }
+  } else {
+    it.t -= dt;
+    if (it.t <= 0) {
+      fieldItem = null;
+      rings.push({ x: it.x, y: it.y, color: '#ffffff', life: 0.3, max: 0.3 });
+      return;
+    }
+  }
+  // 캐릭터에 닿으면 먹음 (이미 아이템을 가지고 있는 고양이는 못 먹음)
+  for (const c of cats) {
+    if (c.item) continue;
+    if (catContact(c.x, c.y, catDims(c), it.x, it.y, ITEM_R)) {
+      c.item = it.type;
+      c.itemHeldT = 0;
+      fieldItem = null;
+      addPopup(c.x, c.y - CAT_H * c.scale - 22, '+' + ITEM_INFO[it.type].name, ITEM_INFO[it.type].color);
+      rings.push({ x: it.x, y: it.y, color: ITEM_INFO[it.type].color, life: 0.35, max: 0.35 });
+      break;
+    }
+  }
+}
+
+// ---------------------------------------------------------------------
+//  12. 컴퓨터 플레이어 (AI)
+//      혼자 하기에서는 몽자(오른쪽)를 담당. 시작 화면 데모에서는 양쪽 모두.
 //      코드는 netDir 로 좌우를 구분하므로 어느 쪽이든 동작한다.
 // ---------------------------------------------------------------------
 function makeAI() {
-  return { shotId: -1, react: 0, think: 0, mode: 'wait', target: 0, recvX: null, baseX: 0, err: 0, wantJump: false, jumpPlan: null };
+  return { shotId: -1, react: 0, think: 0, mode: 'wait', target: 0, recvX: null, baseX: 0, err: 0, wantJump: false, jumpPlan: null, jumpPending: false };
 }
 const ais = [makeAI(), makeAI()];
 
@@ -620,27 +813,63 @@ function resetAI() {
   }
 }
 
+// 크기/점프력에 따라 달라지는 기준 높이들
+function makeProfile(s, jv) {
+  return {
+    s,
+    hitY: GROUND_Y - CAT_H * s - BALL_R + 4 * s,       // 서 있는 머리에 공이 닿는 높이(공 중심 y)
+    lowY: GROUND_Y - FLAT_H * s - BALL_R,              // 슬라이딩한 몸에 닿는 높이
+    jumpY: GROUND_Y - AI_JUMP_RISE - CAT_H * s - BALL_R + 4 * s,                 // 점프해서 칠 높이
+    jumpLead: (jv - Math.sqrt(jv * jv - 2 * CAT_G * AI_JUMP_RISE)) / CAT_G,      // 점프 후 그 높이까지 시간
+  };
+}
+const BASE_PROFILE = makeProfile(1, JUMP_V);
+function aiProfile(c) {
+  return makeProfile(scaleTarget(c.fx.giant, c.fx.shrink), jumpVOf(c));
+}
+
+function isMySide(c, x) {
+  return c.side === 0 ? x < NET_X : x > NET_X;
+}
+
+// 가상의 고양이 상태 (효과 시간과 크기 변화를 실제 게임과 똑같이 진행)
+function simCat(c) {
+  return { s: c.scale, g: c.fx.giant, sh: c.fx.shrink, sp: c.fx.speed, jp: c.fx.jump };
+}
+function simCatStep(k, dt) {
+  k.g = Math.max(0, k.g - dt);
+  k.sh = Math.max(0, k.sh - dt);
+  k.sp = Math.max(0, k.sp - dt);
+  k.jp = Math.max(0, k.jp - dt);
+  k.s = approach(k.s, scaleTarget(k.g, k.sh), SCALE_RATE * dt);
+}
+
+function cloneBall(src) {
+  return { x: src.x, y: src.y, vx: src.held ? 0 : src.vx, vy: src.held ? 0 : src.vy, boost: src.held ? 0 : src.boost };
+}
+
 // 공의 미래 궤적을 가상으로 시뮬레이션해서 떨어질 위치를 미리 계산.
-//   hitX/hitT  : 서 있는 고양이 머리 높이(AI_HIT_Y)로 내려오는 x 와 남은 시간
-//   lowX/lowT  : 슬라이딩한 고양이 높이(AI_LOW_Y)로 내려오는 x 와 남은 시간
-//   jumpX/jumpT: 점프해서 칠 높이(AI_JUMP_Y)로 내려오는 x 와 남은 시간 (없으면 null)
+//   hitX/hitT  : 서 있는 고양이 머리 높이(prof.hitY)로 내려오는 x 와 남은 시간
+//   lowX/lowT  : 슬라이딩한 고양이 높이(prof.lowY)로 내려오는 x 와 남은 시간
+//   jumpX/jumpT: 점프해서 칠 높이(prof.jumpY)로 내려오는 x 와 남은 시간 (없으면 null)
 //   landX/landT: 바닥에 떨어지는 x 와 남은 시간
-function predictBall(src) {
-  const b = { x: src.x, y: src.y, vx: src.held ? 0 : src.vx, vy: src.held ? 0 : src.vy };
+function predictBall(src, prof) {
+  prof = prof || BASE_PROFILE;
+  const b = cloneBall(src);
   const p = { hitX: null, hitT: 0, lowX: null, lowT: 0, jumpX: null, jumpT: 0, landX: b.x, landT: 0 };
   if (b.vy >= 0) {                     // 이미 그 높이보다 아래에서 내려오는 중
-    if (b.y >= AI_HIT_Y) p.hitX = b.x;
-    if (b.y >= AI_LOW_Y) p.lowX = b.x;
+    if (b.y >= prof.hitY) p.hitX = b.x;
+    if (b.y >= prof.lowY) p.lowX = b.x;
   }
   let t = 0;
   for (let i = 0; i < 720; i++) {     // 최대 6초 앞까지
     const prevY = b.y;
-    const grounded = moveBall(b, DT);
+    const grounded = advanceBall(b, DT);
     t += DT;
     if (b.vy > 0) {                    // 내려오면서 해당 높이를 지나는 순간
-      if (p.jumpX === null && prevY < AI_JUMP_Y && b.y >= AI_JUMP_Y) { p.jumpX = b.x; p.jumpT = t; }
-      if (p.hitX === null && prevY < AI_HIT_Y && b.y >= AI_HIT_Y) { p.hitX = b.x; p.hitT = t; }
-      if (p.lowX === null && prevY < AI_LOW_Y && b.y >= AI_LOW_Y) { p.lowX = b.x; p.lowT = t; }
+      if (p.jumpX === null && prevY < prof.jumpY && b.y >= prof.jumpY) { p.jumpX = b.x; p.jumpT = t; }
+      if (p.hitX === null && prevY < prof.hitY && b.y >= prof.hitY) { p.hitX = b.x; p.hitT = t; }
+      if (p.lowX === null && prevY < prof.lowY && b.y >= prof.lowY) { p.lowX = b.x; p.lowT = t; }
     }
     if (grounded) { p.landX = b.x; p.landT = t; break; }
   }
@@ -649,26 +878,55 @@ function predictBall(src) {
   return p;
 }
 
+// 맞은 공이 날아가 떨어지는 곳까지 시뮬레이션
+function finishShot(b, hit, catVy, c, k, res) {
+  const v = hitVelocity(hit.nx, hit.ny, 0, catVy, c.netDir);
+  b.x += hit.nx * (hit.pen + 0.5);
+  b.y += hit.ny * (hit.pen + 0.5);
+  b.vx = v.vx;
+  b.vy = v.vy;
+  b.boost = k.sp > 0 ? BALL_BOOST_TIME : 0;     // 그때 스피드업 중이면 친 공도 빨라짐
+  let j = 0;
+  for (; j < 720; j++) if (advanceBall(b, DT)) break;
+  res.landX = b.x;
+  res.flight = j * DT;
+  return res;
+}
+
 // 고양이가 X 위치에 가만히 서 있다고 가정하고 공을 받아 보는 시뮬레이션.
-// 닿으면 { t: 닿을 때까지 시간, ballX: 닿는 순간 공의 x, landX: 맞고 난 공이 떨어지는 x }, 안 닿으면 null
+// 닿으면 { t: 닿을 때까지 시간, ballX: 닿는 순간 공의 x, landX, flight }, 안 닿으면 null
 function simulateShot(c, X) {
-  const b = { x: ball.x, y: ball.y, vx: ball.held ? 0 : ball.vx, vy: ball.held ? 0 : ball.vy };
-  const dims = { hw: CAT_HW, h: CAT_H, rc: CAT_HW };
+  const b = cloneBall(ball);
+  const k = simCat(c);
   for (let i = 1; i <= 720; i++) {
-    if (moveBall(b, DT)) return null;
-    const hit = catContact(X, GROUND_Y, dims, b.x, b.y, BALL_R);
+    simCatStep(k, DT);
+    if (advanceBall(b, DT)) return null;
+    const hit = catContact(X, GROUND_Y, standDims(k.s), b.x, b.y, BALL_R);
+    if (hit) return finishShot(b, hit, 0, c, k, { t: i * DT, ballX: b.x, landX: 0, flight: 0 });
+  }
+  return null;
+}
+
+// 점프해서 치는 시뮬레이션: 고양이가 X 에 서 있다가 tJump 초 뒤에 점프한다고 가정.
+function simulateJumpShot(c, X, tJump) {
+  const b = cloneBall(ball);
+  const k = simCat(c);
+  let cy = GROUND_Y;
+  let cvy = 0;
+  let jumped = false;
+  for (let i = 1; i <= 720; i++) {
+    simCatStep(k, DT);                                  // updateCat 과 같은 순서
+    if (!jumped && i * DT >= tJump - 1e-9) { jumped = true; cvy = -(k.jp > 0 ? HIGH_JUMP_V : JUMP_V); }
+    if (jumped) {
+      cvy += CAT_G * DT;
+      cy += cvy * DT;
+      if (cy >= GROUND_Y) return null;                  // 착지할 때까지 못 맞힘
+    }
+    if (advanceBall(b, DT)) return null;
+    const hit = catContact(X, cy, standDims(k.s), b.x, b.y, BALL_R);
     if (hit) {
-      const res = { t: i * DT, ballX: b.x, landX: 0, flight: 0 };
-      const v = hitVelocity(hit.nx, hit.ny, 0, 0, c.netDir);
-      b.x += hit.nx * (hit.pen + 0.5);
-      b.y += hit.ny * (hit.pen + 0.5);
-      b.vx = v.vx;
-      b.vy = v.vy;
-      let j = 0;
-      for (; j < 720; j++) if (moveBall(b, DT)) break;
-      res.landX = b.x;
-      res.flight = j * DT;
-      return res;
+      if (!jumped) return null;                         // 점프하기 전에 맞아 버림
+      return finishShot(b, hit, cvy, c, k, { t: i * DT, ballX: b.x, landX: 0, flight: 0 });
     }
   }
   return null;
@@ -676,102 +934,90 @@ function simulateShot(c, X) {
 
 // 상대가 받기 어려운 정도: (상대와 낙하 지점 사이 거리) - (공이 떨어지기 전까지 상대가 갈 수 있는 거리)
 function attackValue(c, landX, flight) {
-  const opp = cats[1 - c.side];
-  const reach = CAT_HW + BALL_R + WALK_SPEED * Math.max(0, flight - 0.15);
-  return Math.abs(landX - opp.x) - reach;
+  const o = cats[1 - c.side];
+  const reach = CAT_HW * o.scale + BALL_R + walkSpeedOf(o) * Math.max(0, flight - 0.15);
+  return Math.abs(landX - o.x) - reach;
+}
+
+function aiDead(c) {
+  return Math.max(AI_DEAD, walkSpeedOf(c) * DT * 0.5 + 0.05);   // 스피드업 중엔 한 스텝이 커지므로 조금 넓힘
 }
 
 // 공을 받을 위치 고르기. 낙하 지점 주변 후보 위치마다 받아 보는 시뮬레이션을 해서 점수를 매긴다.
-//   ① 공이 닿는 순간 고양이가 공보다 "뒤"(구름은 오른쪽)에 있어야 함 → 정중앙/앞쪽에서 받기 금지
+//   ① 공이 닿는 순간 고양이가 공보다 "뒤"(몽자는 오른쪽)에 있어야 함 → 정중앙/앞쪽에서 받기 금지
 //   ② 제시간에 걸어서 갈 수 있는 곳
 //   ③ 맞은 공이 상대 코트에 떨어지는 곳 (상대가 받기 어려운 곳일수록 조금 더 좋음)
 // 결과: { x: 설 위치, rel: 닿는 순간 공보다 뒤에 있는 거리 } 또는 null(어디서도 안 닿음)
-function chooseReceive(c, p) {
+function chooseReceive(c, p, prof) {
   const back = -c.netDir;
-  const [minX, maxX] = catBounds(c, CAT_HW);
+  const [minX, maxX] = catBounds(c, CAT_HW * prof.s);
+  const offMin = AI_OFF_MIN * prof.s;
+  const offMax = AI_OFF_MAX * prof.s;
+  const range = AI_SEARCH * Math.max(1, prof.s);
+  const dead = aiDead(c);
   let best = null;
   let prevX = null;
-  for (let d = -AI_SEARCH; d <= AI_SEARCH; d += 3) {
+  for (let d = -range; d <= range; d += 3) {
     const X = clamp(p.hitX + d, minX, maxX);
     if (X === prevX) continue;
     prevX = X;
     const r = simulateShot(c, X);
     if (!r) continue;
     const rel = (X - r.ballX) * back;
-    let s = 0;
-    if (rel < AI_OFF_SAFE) s -= 5000;                               // ① 정중앙/앞쪽
-    else if (rel < AI_OFF_MIN) s -= (AI_OFF_MIN - rel) * 4;
-    else if (rel > AI_OFF_MAX) s -= (rel - AI_OFF_MAX) * 4;         //    너무 뒤면 공이 낮게 깔림
-    const late = Math.max(0, Math.abs(X - c.x) - AI_DEAD) / WALK_SPEED - r.t;
-    if (late > 0) s -= 2000 + late * 1000;                          // ② 제시간에 못 감
-    const toOpp = c.side === 0 ? r.landX > NET_X : r.landX < NET_X;
-    if (toOpp) s += 1000 + clamp(attackValue(c, r.landX, r.flight), -300, 200) * 0.5;               // ③
-    if (!best || s > best.s) best = { s, x: X, rel };
+    let sc = 0;
+    if (rel < AI_OFF_SAFE) sc -= 5000;                              // ① 정중앙/앞쪽
+    else if (rel < offMin) sc -= (offMin - rel) * 4;
+    else if (rel > offMax) sc -= (rel - offMax) * 4;                //    너무 뒤면 공이 낮게 깔림
+    const late = travelTime(c, Math.abs(X - c.x) - dead) - r.t;
+    if (late > 0) sc -= 2000 + late * 1000;                         // ② 제시간에 못 감
+    if (isMySide(c, r.landX) === false) {
+      sc += 1000 + clamp(attackValue(c, r.landX, r.flight), -300, 200) * 0.5;   // ③
+    }
+    if (!best || sc > best.score) best = { score: sc, x: X, rel };
   }
   return best;
-}
-
-// 점프해서 치는 시뮬레이션: 고양이가 X 에 서 있다가 tJump 초 뒤에 점프한다고 가정.
-// 공중에서 맞히면 { t, ballX, landX, flight(맞은 뒤 바닥까지 시간) }, 아니면 null
-function simulateJumpShot(c, X, tJump) {
-  const b = { x: ball.x, y: ball.y, vx: ball.held ? 0 : ball.vx, vy: ball.held ? 0 : ball.vy };
-  const dims = { hw: CAT_HW, h: CAT_H, rc: CAT_HW };
-  let cy = GROUND_Y;
-  let cvy = 0;
-  let jumped = false;
-  for (let i = 1; i <= 720; i++) {
-    if (!jumped && i * DT >= tJump - 1e-9) { jumped = true; cvy = -JUMP_V; }   // updateCat 과 같은 순서
-    if (jumped) {
-      cvy += CAT_G * DT;
-      cy += cvy * DT;
-      if (cy >= GROUND_Y) return null;          // 착지할 때까지 못 맞힘
-    }
-    if (moveBall(b, DT)) return null;
-    const hit = catContact(X, cy, dims, b.x, b.y, BALL_R);
-    if (hit) {
-      if (!jumped) return null;                 // 점프하기 전에 맞아 버림
-      const res = { t: i * DT, ballX: b.x, landX: 0, flight: 0 };
-      const v = hitVelocity(hit.nx, hit.ny, 0, cvy, c.netDir);
-      b.x += hit.nx * (hit.pen + 0.5);
-      b.y += hit.ny * (hit.pen + 0.5);
-      b.vx = v.vx;
-      b.vy = v.vy;
-      let j = 0;
-      for (; j < 720; j++) if (moveBall(b, DT)) break;
-      res.landX = b.x;
-      res.flight = j * DT;
-      return res;
-    }
-  }
-  return null;
 }
 
 // 점프 공격 계획: 점프 시점 몇 가지 × 설 위치 후보를 시뮬레이션해서
 // 공보다 뒤에서 맞히고, 상대 코트에 상대가 받기 어렵게(멀리, 빠르게) 떨어지는 경우를 고른다.
 // 마땅한 게 없으면 null (그냥 서서 받음)
-function chooseJump(c, p) {
+function chooseJump(c, p, prof) {
   const back = -c.netDir;
-  const [minX, maxX] = catBounds(c, CAT_HW);
-  const base = p.jumpT - AI_JUMP_LEAD;
+  const [minX, maxX] = catBounds(c, CAT_HW * prof.s);
+  const base = p.jumpT - prof.jumpLead;
+  const dead = aiDead(c);
   let best = null;
-  for (const dj of [-0.1, -0.05, 0, 0.05]) {
-    const tJump = base + dj;
+  for (let j = -4; j <= 1; j++) {
+    const tJump = base + j * 0.05;
     if (tJump < DT) continue;
     let prevX = null;
-    for (let d = -30; d <= 90; d += 3) {
+    for (let d = -30; d <= 90 * Math.max(1, prof.s); d += 5) {
       const X = clamp(p.jumpX + back * d, minX, maxX);
       if (X === prevX) continue;
       prevX = X;
-      if (Math.max(0, Math.abs(X - c.x) - AI_DEAD) / WALK_SPEED > tJump) continue;   // 점프 전에 도착 못 함
+      if (travelTime(c, Math.abs(X - c.x) - dead) > tJump) continue;   // 점프 전에 도착 못 함
       const r = simulateJumpShot(c, X, tJump);
       if (!r) continue;
-      if ((X - r.ballX) * back < AI_OFF_SAFE) continue;                           // 공보다 뒤에서 맞혀야 함
+      if ((X - r.ballX) * back < AI_OFF_SAFE) continue;                 // 공보다 뒤에서 맞혀야 함
       if (c.side === 0 ? r.landX < NET_X + 20 : r.landX > NET_X - 20) continue;   // 상대 코트로 넘어가야 함
-      const s = attackValue(c, r.landX, r.flight);                                 // 클수록 받기 어려운 공
-      if (!best || s > best.s) best = { s, x: X, steps: Math.ceil(tJump / DT - 1e-9) - 1 };
+      const sc = attackValue(c, r.landX, r.flight);                     // 클수록 받기 어려운 공
+      if (!best || sc > best.score) best = { score: sc, x: X, steps: Math.ceil(tJump / DT - 1e-9) - 1 };
     }
   }
-  return best && best.s > AI_JUMP_MIN_ATTACK ? best : null;
+  return best && best.score > AI_JUMP_MIN_ATTACK ? best : null;
+}
+
+function inJumpZone(c, p, prof) {
+  return p.jumpX !== null && p.jumpT > prof.jumpLead && Math.abs(p.jumpX - NET_X) < AI_JUMP_ZONE && isMySide(c, p.jumpX);
+}
+
+// 공이 내 쪽으로 올 때 아이템을 쓸지 판단 (번개는 공을 넘긴 직후에 따로 판단)
+function aiWantsItem(c, A, p, prof) {
+  const it = c.item;
+  if (!it || it === 'shrink') return false;
+  const holdLong = c.itemHeldT > AI_ITEM_HOLD_MAX;
+  if (it === 'jump') return (A.wantJump && inJumpZone(c, p, prof)) || holdLong;   // 점프 공격 직전에
+  return p.hitT < AI_ITEM_SOON || holdLong;   // 스피드업·거대화: 3초 안에 공을 받을 때
 }
 
 // 이번 공에서 설 위치의 오차 (+ 는 "뒤" 방향). 서브 때는 작은 오차만.
@@ -785,12 +1031,13 @@ function aiError(serve) {
 
 function aiInput(c) {
   const A = ais[c.side];
-  const inp = { dir: 0, jump: false, slide: false };
-  const back = -c.netDir;                       // "뒤" = 네트 반대 방향 (구름은 오른쪽)
-  const [minX, maxX] = catBounds(c, CAT_HW);
-  const center = (minX + maxX) / 2;             // 내 코트 가운데
-  const p = predictBall(ball);
-  const mine = c.side === 0 ? p.hitX < NET_X : p.hitX > NET_X;   // 공이 내 코트로 내려오는가?
+  const inp = { dir: 0, jump: false, slide: false, use: false };
+  const back = -c.netDir;                       // "뒤" = 네트 반대 방향 (몽자는 오른쪽)
+  const center = homeX(c.side);                 // 내 코트 가운데
+  let prof = aiProfile(c);
+  let [minX, maxX] = catBounds(c, CAT_HW * prof.s);
+  let p = predictBall(ball, prof);
+  let mine = isMySide(c, p.hitX);               // 공이 내 코트로 내려오는가?
 
   // (1) 공이 새로 맞았으면: 잠깐 반응 지연 + 이번 공에서의 실수(오차) 크기를 정함
   if (ball.shotId !== A.shotId) {
@@ -802,6 +1049,7 @@ function aiInput(c) {
     A.recvX = null;
     A.wantJump = !serve && Math.random() < AI_JUMP_CHANCE;   // 서브는 점프 없이 부드럽게
     A.jumpPlan = null;                          // 이전 공에 대한 점프 계획은 버림
+    A.jumpPending = false;
     if (A.mode === 'jump') A.mode = 'receive';
     A.think = 0;
   }
@@ -812,36 +1060,57 @@ function aiInput(c) {
   } else if ((A.think -= DT) <= 0) {
     A.think = AI_THINK;
     if (!mine) {
+      // 내가 친 공이 상대에게 가는 중 → 번개를 쓰면 상대가 작아진 채로 받아야 함
+      if (c.item === 'shrink' && ball.lastHit === c.side && cats[1 - c.side].fx.shrink <= 0) useItem(c);
       // 공이 상대 코트로 간다(상대 코트에 있다) → 내 코트 가운데로 돌아가 대기
       A.mode = 'wait';
       A.target = center;
+      // 단, 그동안 내 코트에 아이템이 있으면 주우러 감
+      if (!c.item && fieldItem && isMySide(c, fieldItem.x)) {
+        A.mode = 'item';
+        A.target = clamp(fieldItem.x, minX, maxX);
+      }
     } else {
-      // 공이 내 코트로 온다 → 떨어질 곳보다 살짝 뒤(구름은 오른쪽)에 선다
+      // 공이 내 쪽으로 곧 온다 → 스피드업/거대화/고공점프를 쓸지 판단 (쓰면 효과를 반영해서 다시 계산)
+      if (aiWantsItem(c, A, p, prof)) {
+        const used = c.item;
+        useItem(c);
+        if (used === 'jump') A.wantJump = true;
+        prof = aiProfile(c);
+        [minX, maxX] = catBounds(c, CAT_HW * prof.s);
+        p = predictBall(ball, prof);
+        A.recvX = null;
+      }
+      // 공이 내 코트로 온다 → 떨어질 곳보다 살짝 뒤(몽자는 오른쪽)에 선다
       if (A.recvX === null || Math.abs(p.hitX - A.baseX) > 20) {
         A.baseX = p.hitX;
-        const best = chooseReceive(c, p);
+        const best = chooseReceive(c, p, prof);
         if (best) {
           // 실수(오차)를 더해도, 닿는 순간 공보다 최소 AI_OFF_SAFE 만큼은 뒤에 있도록 제한
-          // (멈출 때 생기는 허용 오차 AI_DEAD + 여유 2px 까지 감안) → 거의 수직으로 떨어지는 공도 정중앙에서 받지 않음
-          const err = Math.max(A.err, AI_OFF_SAFE + AI_DEAD + 2 - best.rel);
+          // (멈출 때 생기는 허용 오차 + 여유 2px 까지 감안) → 거의 수직으로 떨어지는 공도 정중앙에서 받지 않음
+          const dead = aiDead(c);
+          const err = Math.max(A.err, AI_OFF_SAFE + dead + 2 - best.rel);
           let x = clamp(best.x + back * err, minX, maxX);
           // 옮긴 위치에서 한 번 더 확인: 비스듬히 오는 공은 닿는 지점도 같이 바뀌므로 부족하면 조금 더 뒤로
           for (let k = 0; k < 2; k++) {
             const r = simulateShot(c, x);
             if (!r) break;
             const rel = (x - r.ballX) * back;
-            if (rel >= AI_OFF_SAFE + AI_DEAD) break;
-            x = clamp(x + back * (AI_OFF_SAFE + AI_DEAD + 1 - rel), minX, maxX);
+            if (rel >= AI_OFF_SAFE + dead) break;
+            x = clamp(x + back * (AI_OFF_SAFE + dead + 1 - rel), minX, maxX);
           }
           A.recvX = x;
         } else {
-          A.recvX = clamp(p.hitX + back * (AI_OFF_MIN + 10), minX, maxX);   // 어디서도 안 닿으면 기본 규칙
+          A.recvX = clamp(p.hitX + back * (AI_OFF_MIN + 10) * prof.s, minX, maxX);   // 어디서도 안 닿으면 기본 규칙
         }
-        // 가끔 점프: 네트 근처로 내려오는 높은 공이면 점프 공격을 계획
+        // 점프 공격 계획은 다음 판단 때 세움 (무거운 계산을 한 프레임에 몰지 않으려고 나눔)
         A.jumpPlan = null;
-        if (A.wantJump && p.jumpX !== null && p.jumpT > AI_JUMP_LEAD &&
-            Math.abs(p.jumpX - NET_X) < AI_JUMP_ZONE && (c.side === 0 ? p.jumpX < NET_X : p.jumpX > NET_X)) {
-          A.jumpPlan = chooseJump(c, p);
+        A.jumpPending = A.wantJump;
+      } else if (A.jumpPending) {
+        // 가끔 점프: 네트 근처로 내려오는 높은 공이면 점프 공격을 계획
+        A.jumpPending = false;
+        if (inJumpZone(c, p, prof)) {
+          A.jumpPlan = chooseJump(c, p, prof);
           if (A.jumpPlan) A.jumpPlan.x = clamp(A.jumpPlan.x + back * A.err * 0.4, minX, maxX);   // 점프도 약간의 오차
         }
       }
@@ -857,17 +1126,18 @@ function aiInput(c) {
 
   // (3) 목표 위치로 이동 (허용 오차 안이면 멈춤 → 좌우 떨림 방지)
   //     목표가 벽/네트 끝이면 허용 오차 없이 끝까지 붙는다 (이동 범위 제한이 멈춰 줌)
+  const dead = aiDead(c);
   const dx = A.target - c.x;
   const toMax = A.target >= maxX - 0.01;
   const toMin = A.target <= minX + 0.01;
-  if (dx > AI_DEAD || (toMax && dx > 0)) inp.dir = 1;
-  else if (dx < -AI_DEAD || (toMin && dx < 0)) inp.dir = -1;
+  if (dx > dead || (toMax && dx > 0)) inp.dir = 1;
+  else if (dx < -dead || (toMin && dx < 0)) inp.dir = -1;
   else inp.dir = 0;
 
   // (4) 점프 계획이 있으면 정해 둔 순간에 점프 (자리에 제대로 섰을 때만)
   if (A.mode === 'jump' && A.jumpPlan) {
     if (A.jumpPlan.steps <= 0) {
-      if (c.onGround && c.state === 'normal' && Math.abs(c.x - A.target) <= AI_DEAD + 3) inp.jump = true;
+      if (c.onGround && c.state === 'normal' && Math.abs(c.x - A.target) <= dead + 3) inp.jump = true;
       A.jumpPlan = null;            // 점프했든 못 했든 이후에는 일반 받기로
       A.wantJump = false;
       A.mode = 'receive';
@@ -879,15 +1149,16 @@ function aiInput(c) {
 
   // (5) 멀리 떨어지는 공: 걸어서는 늦으면 슬라이딩으로 받으러 감
   if (A.mode === 'receive' && mine && A.react <= 0 && c.onGround && c.state === 'normal') {
-    const need = Math.abs(A.target - c.x) - AI_DEAD;
-    const late = need > WALK_SPEED * p.hitT + 4;            // 머리 높이에 오기 전까지 걸어서 못 감
+    const need = Math.abs(A.target - c.x) - dead - 4;
+    const late = travelTime(c, need) > p.hitT;                 // 머리 높이에 오기 전까지 걸어서 못 감
     if (late) {
-      const [fMin, fMax] = catBounds(c, FLAT_HW);
-      const tx = clamp(p.lowX + back * AI_SLIDE_BACK, fMin, fMax);
+      const mul = speedMulOf(c);
+      const [fMin, fMax] = catBounds(c, FLAT_HW * prof.s);
+      const tx = clamp(p.lowX + back * AI_SLIDE_BACK * prof.s, fMin, fMax);
       const D = Math.abs(tx - c.x);
-      const reach = slideDistance(Math.min(p.lowT, SLIDE_TIME));   // 지금 미끄러지면 공이 낮게 올 때까지 가는 거리
+      const reach = slideDistance(Math.min(p.lowT, SLIDE_TIME)) * mul;   // 지금 미끄러지면 공이 낮게 올 때까지 가는 거리
       // 지금 출발하면 공이 낮게 내려오는 순간 그 위치 근처(-30 ~ +4px)에 도착할 때 슬라이딩
-      if (D > 24 && D <= SLIDE_REACH && p.lowT <= SLIDE_TIME + 0.12 && reach >= D - 30 && reach <= D + 4) {
+      if (D > 24 && D <= SLIDE_REACH * mul && p.lowT <= SLIDE_TIME + 0.12 && reach >= D - 30 && reach <= D + 4) {
         inp.slide = true;
         inp.dir = tx > c.x ? 1 : -1;
       }
@@ -897,7 +1168,7 @@ function aiInput(c) {
 }
 
 // ---------------------------------------------------------------------
-//  11. 입력 모으기 + 한 스텝 진행
+//  13. 입력 모으기 + 한 스텝 진행
 // ---------------------------------------------------------------------
 function humanInput(side) {
   const map = side === 0 ? (mode === 'cpu' ? P1_SOLO_KEYS : P1_KEYS) : P2_KEYS;
@@ -907,14 +1178,16 @@ function humanInput(side) {
     dir: (down(map.right) ? 1 : 0) - (down(map.left) ? 1 : 0),
     jump: down(map.jump),
     slide: hit(map.slide),
+    use: hit(map.use),
   };
 }
 
 function getInput(side) {
-  if (screen === 'over') return { dir: 0, jump: side === winner, slide: false };   // 이긴 고양이는 신나서 폴짝폴짝
-  if (phase !== 'play') return { dir: 0, jump: side === server, slide: false };    // 득점한 고양이도 폴짝
+  const idle = { dir: 0, jump: false, slide: false, use: false };
+  if (screen === 'over') return { ...idle, jump: side === winner };   // 이긴 고양이는 신나서 폴짝폴짝
+  if (phase !== 'play') return { ...idle, jump: side === server };    // 득점한 고양이도 폴짝
   const isAI = mode === 'demo' || (mode === 'cpu' && side === 1);
-  return isAI ? aiInput(cats[side]) : humanInput(side);
+  return isAI ? aiInput(cats[side]) : humanInput(side);   // AI 는 aiInput 안에서 직접 아이템을 씀
 }
 
 function step(dt) {
@@ -926,6 +1199,7 @@ function step(dt) {
 
   const inputs = [getInput(0), getInput(1)];
   pressedKeys.clear();
+  for (let i = 0; i < 2; i++) if (inputs[i].use) useItem(cats[i]);   // 아이템 키
   updateCat(cats[0], inputs[0], dt);
   updateCat(cats[1], inputs[1], dt);
 
@@ -935,16 +1209,17 @@ function step(dt) {
     updateBallLoose(dt);
     if (screen !== 'over') updatePoint(dt);
   }
+  updateItems(dt);
 }
 
 // ---------------------------------------------------------------------
-//  12. 메뉴 (시작 화면 / 승리 화면)
+//  14. 메뉴 (시작 화면 / 승리 화면)
 // ---------------------------------------------------------------------
 function currentButtons() {
   if (screen === 'title') {
     return [
-      { x: 270, y: 208, w: 320, h: 56, label: '혼자 하기 (vs 컴퓨터)', action: () => startGame('cpu') },
-      { x: 270, y: 276, w: 320, h: 56, label: '둘이 하기', action: () => startGame('2p') },
+      { x: 270, y: 144, w: 320, h: 50, label: '혼자 하기 (vs 컴퓨터)', action: () => startGame('cpu') },
+      { x: 270, y: 204, w: 320, h: 50, label: '둘이 하기', action: () => startGame('2p') },
     ];
   }
   if (screen === 'over') {
@@ -993,10 +1268,21 @@ function onMenuKey(code) {
 }
 
 // ---------------------------------------------------------------------
-//  13. 효과 (모래 먼지, 타격 반짝임, 구름)
+//  15. 효과 (모래 먼지, 타격 반짝임, 글자, 고리, 번개, 구름)
 // ---------------------------------------------------------------------
 const particles = [];
 const sparks = [];
+const popups = [];
+const rings = [];
+const bolts = [];
+
+function clearEffects() {
+  particles.length = 0;
+  sparks.length = 0;
+  popups.length = 0;
+  rings.length = 0;
+  bolts.length = 0;
+}
 
 function puff(x, y, n, spread) {
   for (let i = 0; i < n; i++) {
@@ -1008,8 +1294,12 @@ function puff(x, y, n, spread) {
   }
 }
 
-function addSpark(x, y) {
-  sparks.push({ x, y, life: 0.18 });
+function addSpark(x, y, hot) {
+  sparks.push({ x, y, life: 0.18, hot });
+}
+
+function addPopup(x, y, text, color) {
+  popups.push({ x, y, text, color, life: 1, max: 1 });
 }
 
 function updateParticles(dt) {
@@ -1022,10 +1312,13 @@ function updateParticles(dt) {
     p.y += p.vy * dt;
     if (p.y > GROUND_Y + 3) { p.y = GROUND_Y + 3; p.vy = 0; p.vx *= 0.9; }
   }
-  for (let i = sparks.length - 1; i >= 0; i--) {
-    sparks[i].life -= dt;
-    if (sparks[i].life <= 0) sparks.splice(i, 1);
+  for (const list of [sparks, popups, rings, bolts]) {
+    for (let i = list.length - 1; i >= 0; i--) {
+      list[i].life -= dt;
+      if (list[i].life <= 0) list.splice(i, 1);
+    }
   }
+  for (const p of popups) p.y -= 34 * dt;
 }
 
 const clouds = [
@@ -1057,7 +1350,7 @@ const sandDots = [];
 })();
 
 // ---------------------------------------------------------------------
-//  14. 그리기 도우미
+//  16. 그리기 도우미
 // ---------------------------------------------------------------------
 function roundRectPath(x, y, w, h, r) {
   ctx.beginPath();
@@ -1087,7 +1380,7 @@ function outlinedText(text, x, y, size, fill, stroke, align, lw) {
 }
 
 // ---------------------------------------------------------------------
-//  15. 배경 / 네트
+//  17. 배경 / 네트
 // ---------------------------------------------------------------------
 function drawCloud(x, y, s) {
   ctx.save();
@@ -1205,7 +1498,7 @@ function drawNet() {
 }
 
 // ---------------------------------------------------------------------
-//  16. 공 그리기 (노랑·파랑·흰색 줄무늬 배구공)
+//  18. 공 그리기 (노랑·파랑·흰색 줄무늬 배구공)
 // ---------------------------------------------------------------------
 const BALL_COLORS = ['#ffd43b', '#2f6bd8', '#ffffff'];
 
@@ -1232,6 +1525,16 @@ function drawBall(alpha) {
   const y = lerp(ball.py, ball.y, alpha);
   const R = BALL_R;
 
+  // 스피드업 공: 주황색 잔상과 불꽃 테두리
+  const tr = ball.trail;
+  for (let i = 0; i < tr.length; i++) {
+    const k = (i + 1) / tr.length;
+    ctx.fillStyle = `rgba(255, ${Math.round(120 + 80 * k)}, 40, ${0.35 * k})`;
+    ctx.beginPath();
+    ctx.arc(tr[i].x, tr[i].y, R * (0.45 + 0.5 * k), 0, TAU);
+    ctx.fill();
+  }
+
   if (y + R < 0) {   // 화면 위로 벗어나면 위치 표시
     ctx.fillStyle = '#ff5a5a';
     ctx.strokeStyle = '#2b3550';
@@ -1248,6 +1551,15 @@ function drawBall(alpha) {
 
   ctx.save();
   ctx.translate(x, y);
+  if (ball.boost > 0) {
+    const glow = ctx.createRadialGradient(0, 0, R * 0.8, 0, 0, R * 1.6);
+    glow.addColorStop(0, 'rgba(255, 150, 40, 0.7)');
+    glow.addColorStop(1, 'rgba(255, 150, 40, 0)');
+    ctx.fillStyle = glow;
+    ctx.beginPath();
+    ctx.arc(0, 0, R * 1.6, 0, TAU);
+    ctx.fill();
+  }
   ctx.beginPath();
   ctx.arc(0, 0, R, 0, TAU);
   ctx.save();
@@ -1287,20 +1599,105 @@ function drawBall(alpha) {
   ctx.arc(0, 0, R, 0, TAU);
   ctx.fillStyle = shade;
   ctx.fill();
-  ctx.strokeStyle = '#26314d';
-  ctx.lineWidth = 2;
+  ctx.strokeStyle = ball.boost > 0 ? '#ff7a1a' : '#26314d';
+  ctx.lineWidth = ball.boost > 0 ? 3 : 2;
   ctx.stroke();
   ctx.restore();
 }
 
 // ---------------------------------------------------------------------
-//  17. 고양이 그리기 (Canvas 로 직접 그린 오리지널 캐릭터)
+//  19. 아이템 그리기 (동그란 배지 + 흰색 그림)
+// ---------------------------------------------------------------------
+function drawItemIcon(type, x, y, r) {
+  const info = ITEM_INFO[type];
+  const u = r / 10;
+  ctx.save();
+  ctx.translate(x, y);
+  const g = ctx.createRadialGradient(-r * 0.35, -r * 0.4, r * 0.1, 0, 0, r);
+  g.addColorStop(0, info.light);
+  g.addColorStop(1, info.color);
+  ctx.beginPath();
+  ctx.arc(0, 0, r, 0, TAU);
+  ctx.fillStyle = g;
+  ctx.fill();
+  ctx.lineWidth = Math.max(1.5, r * 0.13);
+  ctx.strokeStyle = '#ffffff';
+  ctx.stroke();
+
+  ctx.fillStyle = '#ffffff';
+  ctx.strokeStyle = '#ffffff';
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  if (type === 'speed') {
+    // >> (빠르게)
+    ctx.lineWidth = 2.4 * u;
+    ctx.beginPath();
+    ctx.moveTo(-5.5 * u, -5 * u); ctx.lineTo(-0.5 * u, 0); ctx.lineTo(-5.5 * u, 5 * u);
+    ctx.moveTo(0.5 * u, -5 * u); ctx.lineTo(5.5 * u, 0); ctx.lineTo(0.5 * u, 5 * u);
+    ctx.stroke();
+  } else if (type === 'giant') {
+    // ⤢ (커지기)
+    ctx.lineWidth = 2.2 * u;
+    ctx.beginPath(); ctx.moveTo(-4 * u, 4 * u); ctx.lineTo(4 * u, -4 * u); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(6 * u, -6 * u); ctx.lineTo(0.5 * u, -6 * u); ctx.lineTo(6 * u, -0.5 * u); ctx.closePath(); ctx.fill();
+    ctx.beginPath(); ctx.moveTo(-6 * u, 6 * u); ctx.lineTo(-0.5 * u, 6 * u); ctx.lineTo(-6 * u, 0.5 * u); ctx.closePath(); ctx.fill();
+  } else if (type === 'jump') {
+    // 스프링 + 위 화살표 (높이 점프)
+    ctx.lineWidth = 1.8 * u;
+    ctx.beginPath();
+    ctx.moveTo(-4.5 * u, 6.5 * u); ctx.lineTo(4.5 * u, 5 * u); ctx.lineTo(-4.5 * u, 3.5 * u);
+    ctx.lineTo(4.5 * u, 2 * u); ctx.lineTo(-4.5 * u, 0.5 * u);
+    ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(0, -7.5 * u); ctx.lineTo(4.5 * u, -2.5 * u); ctx.lineTo(-4.5 * u, -2.5 * u); ctx.closePath(); ctx.fill();
+  } else {
+    // 번개
+    ctx.beginPath();
+    ctx.moveTo(1.5 * u, -7.5 * u); ctx.lineTo(-4.5 * u, 1 * u); ctx.lineTo(-0.5 * u, 1 * u);
+    ctx.lineTo(-2 * u, 7.5 * u); ctx.lineTo(4.5 * u, -1.5 * u); ctx.lineTo(0.5 * u, -1.5 * u);
+    ctx.closePath();
+    ctx.fill();
+  }
+  ctx.restore();
+}
+
+function drawFieldItem() {
+  const it = fieldItem;
+  if (!it) return;
+  // 그림자 (어디로 떨어질지 보이게)
+  const k = clamp(1 - (GROUND_Y - it.y) / 600, 0.35, 1);
+  ctx.fillStyle = `rgba(90, 60, 20, ${0.25 * k})`;
+  ellipsePath(it.x, GROUND_Y + 4, 16 * k, 4 * k);
+  ctx.fill();
+  if (it.state === 'ground' && it.t < 1.5 && Math.floor(it.t * 8) % 2 === 0) return;   // 곧 사라짐: 깜빡임
+  const pulse = 1 + Math.sin(it.age * 7) * 0.06;
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.45)';
+  ctx.beginPath();
+  ctx.arc(it.x, it.y, (ITEM_R + 5) * pulse, 0, TAU);
+  ctx.fill();
+  drawItemIcon(it.type, it.x, it.y, ITEM_R);
+  // 반짝이
+  const sp = it.age * 3;
+  ctx.fillStyle = '#ffffff';
+  for (let i = 0; i < 2; i++) {
+    const a = sp + i * Math.PI;
+    const sx = it.x + Math.cos(a) * (ITEM_R + 9);
+    const sy = it.y + Math.sin(a) * (ITEM_R + 9);
+    ctx.beginPath();
+    ctx.moveTo(sx, sy - 4); ctx.lineTo(sx + 1.3, sy - 1.3); ctx.lineTo(sx + 4, sy); ctx.lineTo(sx + 1.3, sy + 1.3);
+    ctx.lineTo(sx, sy + 4); ctx.lineTo(sx - 1.3, sy + 1.3); ctx.lineTo(sx - 4, sy); ctx.lineTo(sx - 1.3, sy - 1.3);
+    ctx.closePath();
+    ctx.fill();
+  }
+}
+
+// ---------------------------------------------------------------------
+//  20. 고양이 그리기 (Canvas 로 직접 그린 오리지널 캐릭터)
 //      오른쪽을 보는 모습으로 그리고, 왼쪽을 볼 때는 좌우 반전.
 //      원점 = 발 가운데, 위쪽이 -y.
 // ---------------------------------------------------------------------
 const CAT_LOOK = [
-  { body: '#f6a13f', shade: '#e58a2c', stripe: '#d5711a', light: '#fff3dc', line: '#7a3f10', ear: '#ffb3b3', nose: '#ff7f9a' }, // 치즈
-  { body: '#aab3c0', shade: '#939cab', stripe: '#8790a0', light: '#f6f8fb', line: '#3d4452', ear: '#ffc2cd', nose: '#ff92a7' }, // 구름
+  { body: '#f6a13f', shade: '#e58a2c', stripe: '#d5711a', light: '#fff3dc', line: '#7a3f10', ear: '#ffb3b3', nose: '#ff7f9a' }, // 자몽
+  { body: '#aab3c0', shade: '#939cab', stripe: '#8790a0', light: '#f6f8fb', line: '#3d4452', ear: '#ffc2cd', nose: '#ff92a7' }, // 몽자
 ];
 const HEAD_X = 2;
 const HEAD_Y = -44;
@@ -1416,7 +1813,7 @@ function drawCatFigure(c, L) {
   ctx.stroke();
 
   if (c.side === 0) {
-    // 치즈: 이마 줄무늬
+    // 자몽: 이마 줄무늬
     ctx.strokeStyle = L.stripe;
     ctx.lineWidth = 3.2;
     ctx.beginPath();
@@ -1425,12 +1822,14 @@ function drawCatFigure(c, L) {
     ctx.moveTo(12, -72); ctx.lineTo(10, -63);
     ctx.stroke();
   } else {
-    // 구름: 이마에 작은 구름 무늬
+    // 몽자: 이마에 작은 하트 무늬
     ctx.fillStyle = L.light;
     ctx.beginPath();
-    ctx.arc(-1, -66, 4, 0, TAU);
-    ctx.arc(5, -68, 5, 0, TAU);
-    ctx.arc(11, -66, 4, 0, TAU);
+    ctx.moveTo(5, -60);
+    ctx.bezierCurveTo(-3, -65, -2, -72, 2, -71);
+    ctx.bezierCurveTo(4, -70.5, 5, -69, 5, -68);
+    ctx.bezierCurveTo(5, -69, 6, -70.5, 8, -71);
+    ctx.bezierCurveTo(12, -72, 13, -65, 5, -60);
     ctx.fill();
   }
 
@@ -1548,6 +1947,17 @@ function drawCatShadow(c, alpha) {
   const y = lerp(c.py, c.y, alpha);
   const d = catDims(c);
   const k = clamp(1 - (GROUND_Y - y) / 320, 0.4, 1);
+  // 아이템 효과 중이면 발밑이 그 색으로 빛남
+  const active = ITEM_TYPES.filter((t) => c.fx[t] > 0);
+  if (active.length) {
+    const col = ITEM_INFO[active[Math.floor(gameTime * 3) % active.length]].color;
+    ctx.save();
+    ctx.globalAlpha = 0.45 + Math.sin(gameTime * 10) * 0.15;
+    ctx.fillStyle = col;
+    ellipsePath(x, GROUND_Y + 4, d.hw + 10, 8);
+    ctx.fill();
+    ctx.restore();
+  }
   ctx.fillStyle = `rgba(90, 60, 20, ${0.25 * k})`;
   ellipsePath(x, GROUND_Y + 4, (d.hw - 4) * k, 6 * k);
   ctx.fill();
@@ -1558,7 +1968,7 @@ function drawCat(c, alpha) {
   const y = lerp(c.py, c.y, alpha);
   const L = CAT_LOOK[c.side];
   const d = catDims(c);
-  let sx = d.hw / CAT_HW;      // 슬라이딩 중에는 판정과 같은 비율로 납작하게
+  let sx = d.hw / CAT_HW;      // 크기 + 슬라이딩 납작함이 판정과 같은 비율로 반영됨
   let sy = d.h / CAT_H;
   if (!c.onGround) {
     const k = clamp(-c.vy / JUMP_V, -1, 1) * 0.06;
@@ -1570,19 +1980,20 @@ function drawCat(c, alpha) {
     sy *= 1 - k;
     sx *= 1 + k;
   }
-  const bob = c.walkPhase ? Math.abs(Math.sin(c.walkPhase)) * 2.2 : 0;
+  const bob = c.walkPhase ? Math.abs(Math.sin(c.walkPhase)) * 2.2 * c.scale : 0;
 
-  // 슬라이딩 속도선
-  if (c.state === 'slide') {
-    ctx.strokeStyle = 'rgba(255,255,255,0.85)';
+  // 슬라이딩 / 스피드업 속도선
+  const lines = c.state === 'slide' ? c.slideDir : (c.fx.speed > 0 && c.vx !== 0 ? Math.sign(c.vx) : 0);
+  if (lines) {
+    ctx.strokeStyle = c.state === 'slide' ? 'rgba(255,255,255,0.85)' : 'rgba(31,174,104,0.8)';
     ctx.lineWidth = 2.5;
     ctx.lineCap = 'round';
     ctx.beginPath();
     for (let i = 0; i < 3; i++) {
-      const lx = x - c.slideDir * (d.hw + 8 + i * 6);
-      const ly = y - 8 - i * 9;
+      const lx = x - lines * (d.hw + 8 + i * 6);
+      const ly = y - (8 + i * 9) * c.scale;
       ctx.moveTo(lx, ly);
-      ctx.lineTo(lx - c.slideDir * 18, ly);
+      ctx.lineTo(lx - lines * 18, ly);
     }
     ctx.stroke();
   }
@@ -1592,18 +2003,91 @@ function drawCat(c, alpha) {
   ctx.scale(sx * c.facing, sy);
   drawCatFigure(c, L);
   ctx.restore();
+
+  // 고공점프: 발밑 스프링 반짝임 / 번개: 머리 위 작은 번개
+  if (c.fx.jump > 0) {
+    ctx.strokeStyle = ITEM_INFO.jump.color;
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    const fy = y + 2;
+    for (let i = 0; i < 5; i++) {
+      const lx = x - 16 * c.scale + i * 8 * c.scale;
+      ctx.moveTo(lx, fy);
+      ctx.lineTo(lx + 4 * c.scale, fy + (i % 2 ? -5 : 5));
+    }
+    ctx.stroke();
+  }
+  if (c.fx.shrink > 0) {
+    drawItemIcon('shrink', x, y - d.h - 20, 9);
+  }
 }
 
 // ---------------------------------------------------------------------
-//  18. 화면 UI
+//  21. 화면 UI
 // ---------------------------------------------------------------------
+function drawItemSlot(c, x, y, keyLabel) {
+  roundRectPath(x, y, 46, 46, 10);
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+  ctx.fill();
+  ctx.lineWidth = 2.5;
+  ctx.strokeStyle = '#26314d';
+  ctx.stroke();
+  if (c.item) {
+    drawItemIcon(c.item, x + 23, y + 23, 17);
+  } else {
+    ctx.font = `bold 12px ${FONT}`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = 'rgba(38, 49, 77, 0.35)';
+    ctx.fillText('아이템', x + 23, y + 24);
+  }
+  if (keyLabel) {
+    ctx.font = `bold 12px ${FONT}`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'alphabetic';
+    const w = ctx.measureText(keyLabel).width + 12;
+    roundRectPath(x + 23 - w / 2, y + 50, w, 17, 5);
+    ctx.fillStyle = c.item ? '#ffd166' : 'rgba(255,255,255,0.7)';
+    ctx.fill();
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = '#26314d';
+    ctx.stroke();
+    ctx.fillStyle = '#26314d';
+    ctx.fillText(keyLabel, x + 23, y + 63);
+  }
+}
+
+function drawActiveEffects(c, x, y, dir) {
+  let i = 0;
+  for (const t of ITEM_TYPES) {
+    if (c.fx[t] <= 0) continue;
+    const cx = x + dir * i * 30;
+    ctx.beginPath();
+    ctx.arc(cx, y, 13, 0, TAU);
+    ctx.fillStyle = 'rgba(255,255,255,0.75)';
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(cx, y, 13, -Math.PI / 2, -Math.PI / 2 + TAU * (c.fx[t] / EFFECT_TIME));
+    ctx.strokeStyle = ITEM_INFO[t].color;
+    ctx.lineWidth = 3.5;
+    ctx.stroke();
+    drawItemIcon(t, cx, y, 9);
+    i++;
+  }
+}
+
 function drawScore() {
-  const rightName = mode === 'cpu' ? '구름 (컴퓨터)' : '구름';
-  outlinedText('치즈', 26, 34, 22, CAT_LOOK[0].body, '#4a2508', 'left', 5);
+  const rightName = mode === 'cpu' ? '몽자 (컴퓨터)' : '몽자';
+  outlinedText(CAT_NAMES[0], 26, 34, 22, CAT_LOOK[0].body, '#4a2508', 'left', 5);
   outlinedText(String(score[0]), 26, 86, 50, '#ffffff', '#26314d', 'left', 8);
   outlinedText(rightName, W - 26, 34, 22, '#e3e8ef', '#26314d', 'right', 5);
   outlinedText(String(score[1]), W - 26, 86, 50, '#ffffff', '#26314d', 'right', 8);
   outlinedText(`${WIN_SCORE}점 선승`, NET_X, 30, 16, '#ffffff', 'rgba(38, 49, 77, 0.85)', 'center', 4);
+  if (screen === 'title') return;
+  drawItemSlot(cats[0], 98, 44, mode === 'demo' ? '' : 'E 사용');
+  drawItemSlot(cats[1], W - 98 - 46, 44, mode === '2p' ? 'Enter 사용' : '');
+  drawActiveEffects(cats[0], 40, 128, 1);
+  drawActiveEffects(cats[1], W - 40, 128, -1);
 }
 
 function drawEffects() {
@@ -1617,7 +2101,7 @@ function drawEffects() {
     const k = 1 - s.life / 0.18;
     const r1 = 6 + k * 10;
     const r2 = 12 + k * 14;
-    ctx.strokeStyle = `rgba(255, 245, 160, ${s.life / 0.18})`;
+    ctx.strokeStyle = s.hot ? `rgba(255, 150, 40, ${s.life / 0.18})` : `rgba(255, 245, 160, ${s.life / 0.18})`;
     ctx.lineWidth = 3;
     ctx.lineCap = 'round';
     ctx.beginPath();
@@ -1628,6 +2112,46 @@ function drawEffects() {
     }
     ctx.stroke();
   }
+  for (const r of rings) {
+    const k = 1 - r.life / r.max;
+    ctx.save();
+    ctx.globalAlpha = r.life / r.max;
+    ctx.strokeStyle = r.color;
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.arc(r.x, r.y, 14 + k * 40, 0, TAU);
+    ctx.stroke();
+    ctx.restore();
+  }
+  for (const b of bolts) {
+    // 하늘에서 상대 고양이 머리 위로 번개
+    const c = cats[b.side];
+    const topY = c.y - catDims(c).h;
+    ctx.save();
+    ctx.globalAlpha = b.life / b.max;
+    ctx.strokeStyle = '#fff59a';
+    ctx.lineWidth = 5;
+    ctx.lineJoin = 'round';
+    ctx.beginPath();
+    let lx = c.x + 18;
+    ctx.moveTo(lx, 0);
+    for (let yy = 40; yy < topY; yy += 40) {
+      lx = c.x + ((yy / 40) % 2 ? -14 : 14);
+      ctx.lineTo(lx, yy);
+    }
+    ctx.lineTo(c.x, topY);
+    ctx.stroke();
+    ctx.strokeStyle = ITEM_INFO.shrink.color;
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.restore();
+  }
+  for (const p of popups) {
+    ctx.save();
+    ctx.globalAlpha = clamp(p.life / 0.3, 0, 1);
+    outlinedText(p.text, p.x, p.y, 20, p.color, '#ffffff', 'center', 5);
+    ctx.restore();
+  }
 }
 
 function drawMessage() {
@@ -1637,7 +2161,7 @@ function drawMessage() {
   const a = clamp(messageTimer / 0.25, 0, 1);
   ctx.save();
   ctx.globalAlpha = a;
-  ctx.translate(NET_X, 178);
+  ctx.translate(NET_X, 190);
   ctx.scale(pop, pop);
   outlinedText(message, 0, 0, 44, '#fff7d6', '#26314d', 'center', 9);
   ctx.restore();
@@ -1657,7 +2181,7 @@ function drawButtons() {
     ctx.strokeStyle = '#26314d';
     ctx.lineWidth = 3;
     ctx.stroke();
-    ctx.font = `bold ${b.small ? 20 : 24}px ${FONT}`;
+    ctx.font = `bold ${b.small ? 20 : 23}px ${FONT}`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillStyle = '#26314d';
@@ -1667,34 +2191,60 @@ function drawButtons() {
 }
 
 function drawTitle() {
-  ctx.fillStyle = 'rgba(255, 250, 238, 0.42)';
+  ctx.fillStyle = 'rgba(255, 250, 238, 0.45)';
   ctx.fillRect(0, 0, W, H);
   const wob = Math.sin(gameTime * 2) * 3;
-  outlinedText('고양이 배구', NET_X, 118 + wob, 66, '#ffffff', '#26314d', 'center', 12);
-  outlinedText('치즈  vs  구름', NET_X, 164, 24, '#ffe08a', '#26314d', 'center', 6);
+  outlinedText('고양이 배구', NET_X, 88 + wob, 60, '#ffffff', '#26314d', 'center', 11);
+  outlinedText('자몽  vs  몽자', NET_X, 126, 22, '#ffe08a', '#26314d', 'center', 6);
   drawButtons();
 
-  roundRectPath(150, 356, 560, 104, 16);
-  ctx.fillStyle = 'rgba(255, 255, 255, 0.88)';
+  // 조작법 + 아이템 설명
+  roundRectPath(90, 270, 680, 200, 16);
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
   ctx.fill();
   ctx.strokeStyle = 'rgba(38, 49, 77, 0.5)';
   ctx.lineWidth = 2;
   ctx.stroke();
-  ctx.textAlign = 'left';
   ctx.textBaseline = 'alphabetic';
-  ctx.font = `bold 17px ${FONT}`;
+  ctx.textAlign = 'left';
+  ctx.font = `bold 16px ${FONT}`;
   ctx.fillStyle = '#d5711a';
-  ctx.fillText('치즈 (왼쪽)', 178, 386);
+  ctx.fillText('자몽 (왼쪽)', 116, 298);
   ctx.fillStyle = '#5b6474';
-  ctx.fillText('구름 (오른쪽)', 178, 414);
-  ctx.font = `16px ${FONT}`;
+  ctx.fillText('몽자 (오른쪽)', 116, 324);
+  ctx.font = `15px ${FONT}`;
   ctx.fillStyle = '#26314d';
-  ctx.fillText('A / D 이동 · W 점프 · S 슬라이딩', 312, 386);
-  ctx.fillText('← / → 이동 · ↑ 점프 · ↓ 슬라이딩', 312, 414);
-  ctx.font = `14px ${FONT}`;
+  ctx.fillText('A / D 이동 · W 점프 · S 슬라이딩 · E 아이템 사용', 240, 298);
+  ctx.fillText('← / → 이동 · ↑ 점프 · ↓ 슬라이딩 · Enter 아이템 사용', 240, 324);
+
+  ctx.strokeStyle = 'rgba(38, 49, 77, 0.18)';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(110, 338);
+  ctx.lineTo(750, 338);
+  ctx.stroke();
+
+  ctx.font = `bold 14px ${FONT}`;
+  ctx.fillStyle = '#26314d';
+  ctx.textAlign = 'center';
+  ctx.fillText('아이템: 8~14초마다 하늘에서 하나씩! 닿으면 먹고, 아이템 키로 사용', NET_X, 360);
+  ITEM_TYPES.forEach((t, i) => {
+    const bx = 112 + i * 162;
+    drawItemIcon(t, bx + 18, 398, 16);
+    ctx.textAlign = 'left';
+    ctx.font = `bold 15px ${FONT}`;
+    ctx.fillStyle = ITEM_INFO[t].color;
+    ctx.fillText(ITEM_INFO[t].name, bx + 40, 391);
+    ctx.font = `12px ${FONT}`;
+    ctx.fillStyle = '#4a5468';
+    ctx.fillText(ITEM_INFO[t].desc[0], bx + 40, 408);
+    ctx.fillText(ITEM_INFO[t].desc[1], bx + 40, 423);
+  });
+
+  ctx.font = `13px ${FONT}`;
   ctx.fillStyle = '#5b6474';
   ctx.textAlign = 'center';
-  ctx.fillText('11점을 먼저 내면 승리 · ↑↓ 선택, Enter 시작 · 게임 중 Esc: 처음 화면', NET_X, 444);
+  ctx.fillText('11점을 먼저 내면 승리 · ↑↓ 선택, Enter 시작 · 게임 중 Esc: 처음 화면', NET_X, 456);
 }
 
 function drawOver() {
@@ -1738,6 +2288,11 @@ function drawHitboxes() {
   ctx.beginPath();
   ctx.arc(ball.x, ball.y, BALL_R, 0, TAU);
   ctx.stroke();
+  if (fieldItem) {
+    ctx.beginPath();
+    ctx.arc(fieldItem.x, fieldItem.y, ITEM_R, 0, TAU);
+    ctx.stroke();
+  }
   ctx.restore();
 }
 
@@ -1751,6 +2306,7 @@ function render(alpha) {
   drawBallShadow(alpha);
   drawCat(cats[0], alpha);
   drawCat(cats[1], alpha);
+  drawFieldItem();
   drawBall(alpha);
   drawEffects();
   if (DEBUG) drawHitboxes();
@@ -1760,7 +2316,7 @@ function render(alpha) {
 }
 
 // ---------------------------------------------------------------------
-//  19. 메인 루프 (고정 스텝 물리 + 보간 렌더링)
+//  22. 메인 루프 (고정 스텝 물리 + 보간 렌더링)
 // ---------------------------------------------------------------------
 let lastTime = performance.now();
 let acc = 0;
